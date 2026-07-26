@@ -1,0 +1,249 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 221 39% 11%; /* #111827 */
+    --card: 0 0% 100%;
+    --card-foreground: 221 39% 11%;
+    --primary: 221 39% 11%;
+    --primary-foreground: 0 0% 100%;
+    --accent: 163 82% 35%; /* #10a37f */
+    --accent-foreground: 0 0% 100%;
+    --muted: 220 14% 96%; /* #f3f4f6 */
+    --muted-foreground: 220 9% 46%; /* #6b7280 */
+    --border: 220 13% 91%; /* #e5e7eb */
+    --input: 220 13% 91%;
+    --ring: 163 82% 35%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --radius: 10px;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  code,
+  pre,
+  .font-mono {
+    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  }
+}
+
+@layer components {
+  .app-sidebar {
+    @apply border-r border-border bg-[#f7f7f8];
+  }
+
+  .sidebar-item {
+    @apply relative mb-0.5 flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-white hover:text-foreground;
+  }
+
+  .sidebar-item-active {
+    @apply bg-white text-foreground ring-1 ring-border;
+  }
+
+  .sidebar-item-active::before {
+    content: "";
+    @apply absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-[hsl(var(--accent))];
+  }
+
+  .command-bar {
+    @apply mb-5 flex h-10 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm text-muted-foreground;
+  }
+
+  .command-shortcut {
+    @apply ml-auto rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground;
+  }
+
+  .page-title {
+    @apply text-[28px] font-semibold leading-tight tracking-[-0.03em] text-foreground;
+  }
+
+  .page-subtitle {
+    @apply mt-2 max-w-2xl text-sm leading-6 text-muted-foreground;
+  }
+
+  .panel {
+    @apply rounded-lg border border-border bg-card text-card-foreground;
+  }
+
+  .panel-header {
+    @apply flex flex-col gap-1 border-b border-border px-4 py-3.5;
+  }
+
+  .panel-title {
+    @apply text-[15px] font-semibold tracking-[-0.01em] text-foreground;
+  }
+
+  .panel-description {
+    @apply text-sm text-muted-foreground;
+  }
+
+  .muted-path {
+    @apply truncate font-mono text-[12px] leading-5 text-muted-foreground;
+  }
+
+  .list-row {
+    @apply border-b border-border px-4 py-3 transition-colors last:border-b-0 hover:bg-muted/70;
+  }
+
+  .list-row-selected {
+    @apply relative bg-emerald-50/60;
+  }
+
+  .list-row-selected::before {
+    content: "";
+    @apply absolute left-0 top-0 h-full w-0.5 bg-[hsl(var(--accent))];
+  }
+
+  .kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground;
+  }
+
+  .skeleton-line {
+    @apply animate-pulse rounded-full bg-muted;
+  }
+}
+
+
+@layer components {
+  .content-card {
+    @apply rounded-2xl border border-border bg-white;
+  }
+
+  .workflow-tabs {
+    @apply grid grid-cols-3 overflow-hidden rounded-xl border border-border bg-white;
+  }
+
+  .workflow-tab {
+    @apply flex min-h-16 items-center gap-3 border-r border-border px-4 py-3 text-left text-muted-foreground transition-colors last:border-r-0 hover:bg-muted/60 hover:text-foreground;
+  }
+
+  .workflow-tab strong {
+    @apply block text-sm font-semibold text-foreground;
+  }
+
+  .workflow-tab small {
+    @apply mt-1 block text-xs text-muted-foreground;
+  }
+
+  .workflow-tab-active {
+    @apply bg-emerald-50/70 text-foreground shadow-[inset_0_-2px_0_0_hsl(var(--accent))];
+  }
+
+  .metric-button {
+    @apply rounded-lg px-2 py-2 transition-all hover:-translate-y-px hover:ring-1 hover:ring-[hsl(var(--accent))]/40 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring/30;
+  }
+
+  .segmented-control {
+    @apply inline-flex rounded-lg border border-border bg-muted p-1;
+  }
+
+  .segmented-item {
+    @apply rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground;
+  }
+
+  .segmented-item-active {
+    @apply bg-white text-foreground shadow-sm shadow-black/5;
+  }
+
+  .agent-switch {
+    @apply relative inline-flex h-8 w-10 items-center justify-center rounded-full border bg-white transition-all hover:-translate-y-px hover:shadow-sm disabled:pointer-events-none disabled:opacity-70;
+  }
+
+  .agent-switch-icon {
+    @apply flex items-center justify-center;
+  }
+
+  .agent-switch-dot {
+    @apply absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-zinc-300;
+  }
+
+  .agent-switch-on {
+    @apply border-emerald-300 bg-emerald-50/70;
+  }
+
+  .agent-switch-on .agent-switch-dot {
+    @apply bg-emerald-500;
+  }
+
+  .agent-switch-off {
+    @apply border-dashed border-border bg-white;
+  }
+
+  .agent-switch-conflict {
+    @apply border-red-300 bg-red-50;
+  }
+
+  .agent-switch-conflict .agent-switch-dot {
+    @apply bg-red-500;
+  }
+
+  .agent-switch-loading {
+    @apply border-blue-300 bg-blue-50;
+  }
+
+  .agent-switch-loading .agent-switch-dot {
+    @apply animate-pulse bg-blue-500;
+  }
+
+  .detail-button {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-white text-muted-foreground transition-colors hover:bg-muted hover:text-foreground;
+  }
+
+  .skill-description {
+    @apply line-clamp-2 text-sm leading-6 text-muted-foreground;
+  }
+
+  .detail-drawer-overlay {
+    @apply fixed inset-0 z-40 bg-black/10;
+  }
+
+  .detail-drawer {
+    @apply fixed right-0 top-0 z-50 flex h-screen w-[520px] flex-col border-l border-border bg-white shadow-2xl shadow-black/10;
+  }
+}
+
+@layer utilities {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: hsl(var(--border));
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.45);
+  }
+}
+
+@layer utilities {
+  .hide-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}

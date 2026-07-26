@@ -1,0 +1,14 @@
+{
+  "name": "skills-hub-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "desktop:dev": "pnpm --dir apps/desktop tauri dev",
+    "desktop:build": "pnpm --dir apps/desktop tauri build",
+    "desktop:typecheck": "pnpm --dir apps/desktop typecheck",
+    "desktop:build:web": "pnpm --dir apps/desktop build",
+    "desktop:check": "pnpm --dir apps/desktop check"
+  }
+}

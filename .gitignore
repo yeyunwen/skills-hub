@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+target/
+
+# Browser automation and generated review artifacts
+.playwright-cli/
+playwright-report/
+test-results/
+output/
+
+# Local-only files
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example

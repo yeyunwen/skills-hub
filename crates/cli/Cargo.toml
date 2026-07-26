@@ -1,0 +1,20 @@
+[package]
+name = "skh-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "skh"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+console.workspace = true
+inquire.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+skills-hub-core = { path = "../core" }
