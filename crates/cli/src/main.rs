@@ -6,7 +6,7 @@ use skills_hub_core::*;
 
 /// skills-hub 的 Rust CLI 入口。
 ///
-/// CLI 只负责参数解析和展示，所有业务逻辑都在 `skills-hub-core`，方便未来 Tauri GUI 复用。
+/// CLI 只负责参数解析和展示，所有业务逻辑都在 `skills-hub-core`，与 Tauri GUI 共用同一套能力。
 #[derive(Debug, Parser)]
 #[command(
     name = "skh",
@@ -14,7 +14,7 @@ use skills_hub_core::*;
     about = "Unified skill hub for AI coding agents"
 )]
 struct Cli {
-    /// 输出 JSON，方便脚本或未来 GUI sidecar 复用。
+    /// 输出 JSON，方便脚本和 GUI sidecar 复用。
     #[arg(long, global = true)]
     json: bool,
     /// 只展示计划，不写文件。

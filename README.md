@@ -1,17 +1,16 @@
 # skills-hub
 
-`skills-hub` 是一个专注管理 AI Coding Agent Skills 的工具。它把 GitHub / GitLab / SSH Git / 本地目录里的 `SKILL.md` 统一扫描、选择性安装到 hub，再分发到 Codex、Claude、Cursor、OpenClaw 或远程设备。
-
-> 当前 Rust 版是长期主线；早期 `packages/*` TypeScript 代码保留为 prototype 参考。
+`skills-hub` 是一个管理 AI Coding Agent Skills 的桌面工具和 CLI。它把 GitHub / GitLab / SSH Git / 本地目录里的 `SKILL.md` 扫描、安装到当前环境的统一技能库，再按需分发到 Codex、Claude、Cursor 或 OpenClaw。
 
 ## 目标
 
-- 统一 hub：`~/.agents/skills`
+- 每个环境拥有独立 Hub：默认是 `~/.agents/skills`
 - 支持 GitHub / GitLab / generic Git / SSH Git / 本地目录
 - 先扫描 source 中有多少 skill，再选择性安装
 - 本机 agent 默认通过 symlink 分发
-- 远程设备通过系统 SSH + rsync 同步
-- 未来 Tauri GUI 直接复用 Rust core
+- SSH 环境通过系统 SSH、rsync 和远端 helper 管理
+- 本机与 SSH 共享同一套 Skills、来源、Agent 和冲突模型
+- 多环境之间支持显式对比和安全传输，不默认建立双向同步
 
 ## 开发环境
 
@@ -77,7 +76,7 @@ skh agent sync --tools codex,claude,cursor,openclaw --sync-method auto
 skh migrate --from codex
 ```
 
-远程设备同步：
+SSH 环境操作：
 
 ```bash
 skh remote add office-mac --host office-mac.local --user dev
@@ -144,10 +143,10 @@ just desktop-check
 just desktop-build
 ```
 
-首版 GUI 聚焦本机闭环：
+GUI 默认以当前环境为上下文：
 
 ```txt
-Sources -> Hub -> Agents
+Environment -> Skills -> Agents
 ```
 
-Remote command 已在 Rust/Tauri 层预留，完整 Remote UI 放到下一阶段。
+本机和 SSH 环境处于同一级入口。切换环境后进入相同的 Skills 页面；安装来源、设置、对比和传输围绕当前环境或明确的来源/目标环境执行。

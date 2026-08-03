@@ -89,7 +89,7 @@ pub enum SourceKind {
     Local,
 }
 
-/// 远程设备配置；v1 只保存连接信息，不托管私钥。
+/// SSH 环境连接配置；只保存连接信息，不托管私钥。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteHost {
     /// 远程设备名称，例如 `office-mac`。
@@ -122,7 +122,7 @@ pub struct HubConfig {
     pub agents: BTreeMap<AgentKind, AgentConfig>,
     /// 已登记的 skill sources。
     pub sources: BTreeMap<String, SkillSource>,
-    /// 已登记的远程设备。
+    /// 已登记的 SSH 环境连接。
     pub remotes: BTreeMap<String, RemoteHost>,
     /// 默认同步方式；GUI/CLI 未显式指定时使用。
     #[serde(default)]

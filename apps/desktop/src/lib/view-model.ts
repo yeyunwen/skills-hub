@@ -9,7 +9,6 @@ export interface SkillRowView {
   path: string;
   skillFile?: string;
   agents: SkillAgentStatus[];
-  sourceLabel: string;
 }
 
 export function buildSkillRows(scan?: ScanAllResult, statuses?: SkillStatus[]): SkillRowView[] {
@@ -27,7 +26,6 @@ export function buildSkillRows(scan?: ScanAllResult, statuses?: SkillStatus[]): 
       path: skill.path,
       skillFile: skill.skillFile ?? skill.skill_file,
       agents: status?.agents ?? [],
-      sourceLabel: inferSourceLabel(skill.path),
     };
   });
 }
@@ -35,14 +33,6 @@ export function buildSkillRows(scan?: ScanAllResult, statuses?: SkillStatus[]): 
 export function agentStatus(row: SkillRowView, agent: AgentKind) {
   return row.agents.find((item) => item.agent === agent)?.status ?? "missing";
 }
-
-function inferSourceLabel(path: string) {
-  const parts = path.split("/").filter(Boolean);
-  const skillsIndex = parts.lastIndexOf("skills");
-  if (skillsIndex >= 0 && parts[skillsIndex + 1]) return parts[skillsIndex + 1];
-  return "本地";
-}
-
 
 export interface MigrationSummary {
   agent: AgentKind;

@@ -1,6 +1,10 @@
-use crate::{load_config, safe_skill_dir_name, save_config, AgentKind, LinkStatus, RemoteHost, SyncMethod};
+use crate::{
+    default_source_id, load_config, parse_git_url, safe_skill_dir_name, save_config, AgentKind,
+    InstallOptions, InstallResult, LinkStatus, RemoteHost, SkillSource, SourceScanResult,
+    SyncMethod,
+};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -163,7 +167,8 @@ fn resolve_ssh_host(alias: &str) -> ResolvedSshHost {
         return ResolvedSshHost::default();
     }
     let mut resolved = ResolvedSshHost::default();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
         let mut parts = line.splitn(2, char::is_whitespace);
         let Some(key) = parts.next() else {
             continue;
@@ -181,7 +186,7 @@ fn resolve_ssh_host(alias: &str) -> ResolvedSshHost {
 
 /// 远程同步命令计划。
 ///
-/// v1 先生成/执行 rsync 计划，不在远端安装 skh，降低多设备接入成本。
+/// 生成/执行跨环境同步计划；默认通过 SSH、rsync 和远端 helper 工作，不要求远端预装 skh。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteSyncPlan {
     /// 远程设备。
@@ -493,6 +498,15 @@ pub struct RemoteSkillInfo {
     pub path: String,
     /// 描述。
     pub description: Option<String>,
+    /// 是否是 Agent 目录中的符号链接。
+    #[serde(default)]
+    pub is_symlink: bool,
+    /// 符号链接解析后的目标路径。
+    #[serde(default)]
+    pub symlink_target: Option<String>,
+    /// Skill 目录内容哈希，用于跨环境比较。
+    #[serde(default)]
+    pub content_hash: Option<String>,
 }
 
 /// 远程单个 Agent 的扫描结果。
@@ -516,6 +530,373 @@ pub struct RemoteScanResult {
     /// 各 Agent 的扫描结果。
     pub agents: Vec<RemoteAgentScanResult>,
 }
+
+/// 远端独立环境的 Hub 与 Agent 扫描结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteEnvironmentSnapshot {
+    /// SSH 环境配置。
+    pub remote: RemoteHost,
+    /// 远端 Hub 中的 Skill。
+    pub hub: Vec<RemoteSkillInfo>,
+    /// 各 Agent 目录中的 Skill。
+    pub agents: Vec<RemoteAgentScanResult>,
+}
+
+/// 远端执行环境能力。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteCapabilities {
+    /// SSH 本身是否可连接。
+    pub ssh: bool,
+    /// 是否存在 rsync。
+    pub rsync: bool,
+    /// 是否存在 git。
+    pub git: bool,
+    /// 是否存在 Python3 helper 运行时。
+    pub python3: bool,
+    /// 是否存在可选的 skh 命令。
+    pub skh: bool,
+    /// 能力检测失败时的说明。
+    pub message: Option<String>,
+}
+
+/// 检测远端 helper 所需的命令能力。
+pub fn check_remote_capabilities(name: &str) -> Result<RemoteCapabilities> {
+    let config = load_config()?;
+    let remote = config
+        .remotes
+        .get(name)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
+    let mut command = Command::new("ssh");
+    if let Some(port) = remote.port {
+        command.args(["-p", &port.to_string()]);
+    }
+    command.arg(remote_spec(&remote));
+    command.arg("sh -lc 'for tool in rsync git python3 skh; do if command -v \"$tool\" >/dev/null 2>&1; then printf \"%s=1\\n\" \"$tool\"; else printf \"%s=0\\n\" \"$tool\"; fi; done'");
+    let output = command.output()?;
+    if !output.status.success() {
+        return Ok(RemoteCapabilities {
+            ssh: false,
+            rsync: false,
+            git: false,
+            python3: false,
+            skh: false,
+            message: Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        });
+    }
+    let mut values = std::collections::BTreeMap::new();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if let Some((name, value)) = line.split_once('=') {
+            values.insert(name, value == "1");
+        }
+    }
+    Ok(RemoteCapabilities {
+        ssh: true,
+        rsync: values.get("rsync").copied().unwrap_or(false),
+        git: values.get("git").copied().unwrap_or(false),
+        python3: values.get("python3").copied().unwrap_or(false),
+        skh: values.get("skh").copied().unwrap_or(false),
+        message: None,
+    })
+}
+
+/// 扫描远端自己的 Hub 与 Agent 目录，不读取本机 Hub。
+pub fn remote_environment_snapshot(
+    name: &str,
+    agents: &[AgentKind],
+) -> Result<RemoteEnvironmentSnapshot> {
+    let config = load_config()?;
+    let remote = config
+        .remotes
+        .get(name)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
+    let (_, hub) = run_remote_skill_scan_at(&remote, "~/.agents/skills", &["~/.agents/skills"])?;
+    let scan = remote_scan(name, agents)?;
+    Ok(RemoteEnvironmentSnapshot {
+        remote,
+        hub,
+        agents: scan.agents,
+    })
+}
+
+/// 只扫描远端环境自己的 Hub。
+pub fn remote_scan_hub(name: &str) -> Result<(RemoteHost, Vec<RemoteSkillInfo>)> {
+    let config = load_config()?;
+    let remote = config
+        .remotes
+        .get(name)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
+    let (_, hub) = run_remote_skill_scan_at(&remote, "~/.agents/skills", &["~/.agents/skills"])?;
+    Ok((remote, hub))
+}
+
+/// 列出 SSH 环境自己登记的安装来源。
+pub fn remote_list_sources(name: &str) -> Result<Vec<SkillSource>> {
+    let remote = get_remote(name)?;
+    run_remote_source_helper(&remote, serde_json::json!({ "op": "list" }))
+}
+
+/// 在 SSH 环境自己的配置中登记安装来源。
+pub fn remote_add_source(
+    name: &str,
+    id: Option<String>,
+    url: String,
+    branch: Option<String>,
+    dry_run: bool,
+) -> Result<SkillSource> {
+    let remote = get_remote(name)?;
+    let id = id.unwrap_or_else(|| default_source_id(&url));
+    let kind = serde_json::to_value(parse_git_url(&url).kind)?;
+    run_remote_source_helper(
+        &remote,
+        serde_json::json!({
+            "op": "add",
+            "id": id,
+            "url": url,
+            "branch": branch,
+            "kind": kind,
+            "dry_run": dry_run,
+        }),
+    )
+}
+
+/// 删除 SSH 环境中的来源登记，不删除已安装 Skill。
+pub fn remote_remove_source(
+    name: &str,
+    source_id: &str,
+    dry_run: bool,
+) -> Result<Option<SkillSource>> {
+    let remote = get_remote(name)?;
+    run_remote_source_helper(
+        &remote,
+        serde_json::json!({
+            "op": "remove",
+            "source_ref": source_id,
+            "dry_run": dry_run,
+        }),
+    )
+}
+
+/// 在 SSH 环境内准备并扫描来源。
+pub fn remote_scan_source(name: &str, source_ref: &str, dry_run: bool) -> Result<SourceScanResult> {
+    let remote = get_remote(name)?;
+    run_remote_source_helper(
+        &remote,
+        serde_json::json!({
+            "op": "scan",
+            "source_ref": source_ref,
+            "dry_run": dry_run,
+        }),
+    )
+}
+
+/// 从 SSH 环境自己的来源安装 Skill 到该环境 Hub。
+pub fn remote_install_from_source(
+    name: &str,
+    source_ref: &str,
+    options: InstallOptions,
+) -> Result<InstallResult> {
+    let remote = get_remote(name)?;
+    run_remote_source_helper(
+        &remote,
+        serde_json::json!({
+            "op": "install",
+            "source_ref": source_ref,
+            "skills": options.skills,
+            "all": options.all,
+            "force": options.force,
+            "dry_run": options.dry_run,
+        }),
+    )
+}
+
+fn get_remote(name: &str) -> Result<RemoteHost> {
+    load_config()?
+        .remotes
+        .get(name)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))
+}
+
+fn run_remote_source_helper<T: DeserializeOwned>(
+    remote: &RemoteHost,
+    payload: serde_json::Value,
+) -> Result<T> {
+    let encoded = serde_json::to_vec(&payload)?
+        .into_iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let script = format!(
+        "import json\npayload = json.loads(bytes.fromhex({encoded:?}).decode('utf-8'))\n{REMOTE_SOURCE_HELPER}"
+    );
+    let output = run_remote_shell(remote, &format!("python3 - <<'PY'\n{script}\nPY"))?;
+    serde_json::from_slice(&output.stdout).map_err(Into::into)
+}
+
+const REMOTE_SOURCE_HELPER: &str = r#"
+import datetime
+import json
+import os
+import re
+import shutil
+import subprocess
+
+config_path = os.path.expanduser('~/.config/skills-hub/config.json')
+cache_root = os.path.expanduser('~/.cache/skills-hub/sources')
+hub_root = os.path.expanduser('~/.agents/skills')
+
+def load_config():
+    if not os.path.isfile(config_path):
+        return {'sources': {}}
+    with open(config_path, 'r', encoding='utf-8') as handle:
+        data = json.load(handle)
+    data.setdefault('sources', {})
+    return data
+
+def save_config(data):
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    with open(config_path, 'w', encoding='utf-8') as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+        handle.write('\n')
+
+def run_git(args, cwd=None):
+    result = subprocess.run(['git', *args], cwd=cwd, text=True, capture_output=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or 'git command failed')
+    return result.stdout.strip()
+
+def prepare_source(source):
+    expanded = os.path.expanduser(source['url'])
+    if os.path.isdir(expanded):
+        return os.path.realpath(expanded)
+    root = os.path.join(cache_root, source['id'])
+    branch = source.get('branch')
+    if os.path.isdir(os.path.join(root, '.git')):
+        run_git(['fetch', '--prune'], root)
+        if branch:
+            run_git(['checkout', branch], root)
+        run_git(['pull', '--ff-only'], root)
+    else:
+        os.makedirs(cache_root, exist_ok=True)
+        args = ['clone', '--depth', '1']
+        if branch:
+            args.extend(['--branch', branch])
+        args.extend([source['url'], root])
+        run_git(args)
+    return root
+
+def parse_skill(root, current):
+    skill_file = os.path.join(current, 'SKILL.md')
+    try:
+        content = open(skill_file, 'r', encoding='utf-8').read()
+    except Exception:
+        return None
+    dir_name = os.path.basename(current)
+    name = dir_name
+    description = None
+    frontmatter = re.match(r'^---\s*\n(.*?)\n---', content, re.S)
+    if frontmatter:
+        for line in frontmatter.group(1).splitlines():
+            if line.startswith('name:'):
+                name = line.split(':', 1)[1].strip().strip('\"\'') or dir_name
+            elif line.startswith('description:'):
+                description = line.split(':', 1)[1].strip().strip('\"\'') or None
+    return {
+        'name': name,
+        'source_path': os.path.relpath(current, root),
+        'description': description,
+        'installed': os.path.lexists(os.path.join(hub_root, dir_name)),
+        'hub_path': os.path.join(hub_root, dir_name),
+    }
+
+def scan_source(config, source, persist):
+    root = prepare_source(source)
+    skills = []
+    for current, dirs, files in os.walk(root):
+        dirs[:] = [item for item in dirs if not item.startswith('.')]
+        if 'SKILL.md' in files:
+            item = parse_skill(root, current)
+            if item:
+                skills.append(item)
+            dirs[:] = []
+    skills.sort(key=lambda item: item['name'].lower())
+    source['skill_count'] = len(skills)
+    source['last_scan_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    source['last_commit'] = None
+    if os.path.isdir(os.path.join(root, '.git')):
+        try:
+            source['last_commit'] = run_git(['rev-parse', 'HEAD'], root)
+        except Exception:
+            pass
+    if persist:
+        config['sources'][source['id']] = source
+        save_config(config)
+    return {'source': source, 'root': root, 'skills': skills}
+
+config = load_config()
+op = payload['op']
+dry_run = bool(payload.get('dry_run', False))
+
+if op == 'list':
+    result = sorted(config['sources'].values(), key=lambda item: item['id'].lower())
+elif op == 'add':
+    source = {
+        'id': payload['id'],
+        'url': payload['url'],
+        'branch': payload.get('branch'),
+        'kind': payload['kind'],
+        'skill_count': None,
+        'last_scan_at': None,
+        'last_commit': None,
+    }
+    if not dry_run:
+        config['sources'][source['id']] = source
+        save_config(config)
+    result = source
+elif op == 'remove':
+    result = config['sources'].get(payload['source_ref'])
+    if result is not None and not dry_run:
+        del config['sources'][payload['source_ref']]
+        save_config(config)
+elif op in ('scan', 'install'):
+    source_ref = payload['source_ref']
+    if source_ref not in config['sources']:
+        raise RuntimeError('source not found: ' + source_ref)
+    scan = scan_source(config, dict(config['sources'][source_ref]), not dry_run)
+    if op == 'scan':
+        result = scan
+    else:
+        wanted = {item.lower() for item in payload.get('skills', [])}
+        selected = scan['skills'] if payload.get('all') else [item for item in scan['skills'] if item['name'].lower() in wanted]
+        if not selected:
+            raise RuntimeError('no skills selected')
+        installed = []
+        skipped = []
+        os.makedirs(hub_root, exist_ok=True)
+        for item in selected:
+            source_dir = os.path.join(scan['root'], item['source_path'])
+            target = item['hub_path']
+            if os.path.lexists(target) and not payload.get('force'):
+                skipped.append([item['name'], 'hub already contains this skill'])
+                continue
+            if not dry_run:
+                if os.path.lexists(target):
+                    stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+                    backup = os.path.expanduser(f'~/.config/skills-hub/backups/source-install/{stamp}/{os.path.basename(target)}')
+                    os.makedirs(os.path.dirname(backup), exist_ok=True)
+                    shutil.move(target, backup)
+                shutil.copytree(source_dir, target, symlinks=True)
+            item['installed'] = True
+            installed.append(item)
+        result = {'installed': installed, 'skipped': skipped}
+else:
+    raise RuntimeError('unsupported source operation: ' + op)
+
+print(json.dumps(result, ensure_ascii=False))
+"#;
 
 /// 远程 skill 与本机 hub 对比后的状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -610,8 +991,8 @@ pub struct RemoteRemoveResult {
 
 /// 扫描远端 Agent skill 目录。
 ///
-/// v1 不要求远端安装 skh；通过 SSH 执行一段 Python3 脚本来解析 `SKILL.md`。
-/// 如果远端没有 python3，会返回清晰错误，后续可以再加 POSIX shell fallback。
+/// 默认通过 SSH 执行 Python3 helper 解析远端 `SKILL.md`。
+/// 如果远端缺少 Python3，会返回能力错误；远端 skh 作为可选执行器保留。
 pub fn remote_scan(name: &str, agents: &[AgentKind]) -> Result<RemoteScanResult> {
     let config = load_config()?;
     let remote = config
@@ -636,7 +1017,9 @@ pub fn remote_scan(name: &str, agents: &[AgentKind]) -> Result<RemoteScanResult>
     })
 }
 
-/// 对比本机 hub 和远程扫描结果，给出 synced/missing/remote-only。
+/// 兼容旧 CLI 的远端对比接口。
+///
+/// 新 GUI 应通过环境快照和显式跨环境对比接口使用，不把本机 Hub 默认视为远端真源。
 pub fn remote_list(name: &str, agents: &[AgentKind]) -> Result<RemoteListResult> {
     let config = load_config()?;
     let hub_skills = crate::scan_skill_directory(&config.hub_dir)?;
@@ -771,6 +1154,70 @@ pub fn remote_sync_skill(
     remote_sync_skill_from_path(remote, agent, &hub_skill, sync_method, dry_run)
 }
 
+/// 将远端环境 Hub 中已有的 Skill 分发到该环境的 Agent，不经过本机 Hub。
+pub fn remote_link_hub_skill(
+    name: &str,
+    agent: AgentKind,
+    skill_name: &str,
+    sync_method: SyncMethod,
+    dry_run: bool,
+) -> Result<RemoteSkillSyncResult> {
+    let config = load_config()?;
+    let remote = config
+        .remotes
+        .get(name)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
+    let dir_name = safe_skill_dir_name(skill_name)?;
+    let (_, hub_skills) = remote_scan_hub(name)?;
+    let hub_skill = hub_skills
+        .into_iter()
+        .find(|skill| skill.dir_name == dir_name || skill.name == skill_name)
+        .ok_or_else(|| anyhow::anyhow!("skill not found in remote hub: {skill_name}"))?;
+    let remote_hub_path = hub_skill.symlink_target.unwrap_or(hub_skill.path);
+    let remote_agent_path = format!("{}/{}", remote_agent_dir(agent), hub_skill.dir_name);
+    if dry_run {
+        return Ok(RemoteSkillSyncResult {
+            remote,
+            agent,
+            skill_name: hub_skill.dir_name,
+            source_path: PathBuf::from(&remote_hub_path),
+            remote_hub_path,
+            remote_agent_path,
+            status: LinkStatus::DryRun,
+            reason: None,
+        });
+    }
+    let output = run_remote_shell(
+        &remote,
+        &remote_single_skill_link_shell(
+            agent,
+            &hub_skill.dir_name,
+            &remote_hub_path,
+            &remote_agent_path,
+            sync_method,
+        ),
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let (status, reason) = if stdout.starts_with("conflict:") {
+        (LinkStatus::Conflict, Some(stdout))
+    } else if stdout.starts_with("copied:") {
+        (LinkStatus::Copied, None)
+    } else {
+        (LinkStatus::Linked, None)
+    };
+    Ok(RemoteSkillSyncResult {
+        remote,
+        agent,
+        skill_name: hub_skill.dir_name,
+        source_path: PathBuf::from(&remote_hub_path),
+        remote_hub_path,
+        remote_agent_path,
+        status,
+        reason,
+    })
+}
+
 /// 从本机某个 Agent 目录同步单个 skill 到远端指定 Agent。
 pub fn remote_sync_local_agent_skill(
     name: &str,
@@ -791,7 +1238,9 @@ pub fn remote_sync_local_agent_skill(
     let skill = crate::scan_skill_directory(source_dir)?
         .into_iter()
         .find(|skill| skill.dir_name == dir_name || skill.name == skill_name)
-        .ok_or_else(|| anyhow::anyhow!("skill not found in local agent: {source_agent:?}/{skill_name}"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("skill not found in local agent: {source_agent:?}/{skill_name}")
+        })?;
 
     remote_sync_skill_from_path(remote, target_agent, &skill, sync_method, dry_run)
 }
@@ -803,7 +1252,10 @@ fn remote_sync_skill_from_path(
     sync_method: SyncMethod,
     dry_run: bool,
 ) -> Result<RemoteSkillSyncResult> {
-    let source_path = skill.symlink_target.clone().unwrap_or_else(|| skill.path.clone());
+    let source_path = skill
+        .symlink_target
+        .clone()
+        .unwrap_or_else(|| skill.path.clone());
     let remote_hub_path = format!("~/.agents/skills/{}", skill.dir_name);
     let remote_agent_path = format!("{}/{}", remote_agent_dir(agent), skill.dir_name);
 
@@ -892,7 +1344,10 @@ pub fn remote_remove_skill(
     let dir_name = safe_skill_dir_name(skill_name)?;
     let remote_dir = remote_agent_dir(agent);
     let remote_path = format!("{remote_dir}/{dir_name}");
-    let backup_path = format!("~/.agents/skills-hub-backups/$(date +%Y%m%d-%H%M%S)/{}/{dir_name}", agent.as_str());
+    let backup_path = format!(
+        "~/.agents/skills-hub-backups/$(date +%Y%m%d-%H%M%S)/{}/{dir_name}",
+        agent.as_str()
+    );
     let script = format!(
         r#"set -eu
 target={remote_path:?}
@@ -974,34 +1429,77 @@ fn run_remote_skill_scan(
 ) -> Result<(bool, Vec<RemoteSkillInfo>)> {
     let dir = remote_agent_dir(agent);
     let markers = remote_agent_markers(agent);
+    run_remote_skill_scan_at(remote, dir, &markers)
+}
+
+fn run_remote_skill_scan_at(
+    remote: &RemoteHost,
+    dir: &str,
+    markers: &[&str],
+) -> Result<(bool, Vec<RemoteSkillInfo>)> {
     let script = format!(
         r#"
-import json, os, re
+import hashlib, json, os, re
 root = os.path.expanduser({dir:?})
 markers = [os.path.expanduser(item) for item in {markers:?}]
 available = any(os.path.exists(item) for item in markers)
 items = []
+def append_skill(current):
+    real_root = os.path.realpath(current)
+    path = os.path.join(real_root, 'SKILL.md')
+    if not os.path.isfile(path):
+        return
+    try:
+        content = open(path, 'r', encoding='utf-8').read()
+    except Exception:
+        return
+    name = os.path.basename(current)
+    desc = None
+    m = re.match(r'^---\s*\n(.*?)\n---', content, re.S)
+    if m:
+        for line in m.group(1).splitlines():
+            if line.startswith('name:'):
+                name = line.split(':', 1)[1].strip().strip('"\'') or name
+            elif line.startswith('description:'):
+                desc = line.split(':', 1)[1].strip().strip('"\'') or None
+    digest = hashlib.sha256()
+    for hash_root, hash_dirs, hash_files in os.walk(real_root):
+        hash_dirs[:] = sorted(d for d in hash_dirs if d != '.git')
+        for filename in sorted(hash_files):
+            file_path = os.path.join(hash_root, filename)
+            relative = os.path.relpath(file_path, real_root)
+            digest.update(relative.encode('utf-8', errors='replace'))
+            try:
+                with open(file_path, 'rb') as handle:
+                    while True:
+                        chunk = handle.read(65536)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+            except Exception:
+                continue
+    items.append({{
+        'name': name,
+        'dir_name': os.path.basename(current),
+        'path': current,
+        'description': desc,
+        'is_symlink': os.path.islink(current),
+        'symlink_target': os.path.realpath(current) if os.path.islink(current) else None,
+        'content_hash': digest.hexdigest(),
+    }})
+
 if os.path.isdir(root):
-    for current, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if not d.startswith('.')]
-        if 'SKILL.md' not in files:
+    for entry in os.scandir(root):
+        if entry.name.startswith('.'):
             continue
-        path = os.path.join(current, 'SKILL.md')
-        try:
-            content = open(path, 'r', encoding='utf-8').read()
-        except Exception:
-            continue
-        name = os.path.basename(current)
-        desc = None
-        m = re.match(r'^---\s*\n(.*?)\n---', content, re.S)
-        if m:
-            for line in m.group(1).splitlines():
-                if line.startswith('name:'):
-                    name = line.split(':', 1)[1].strip().strip('"\'') or name
-                elif line.startswith('description:'):
-                    desc = line.split(':', 1)[1].strip().strip('"\'') or None
-        items.append({{'name': name, 'dir_name': os.path.basename(current), 'path': current, 'description': desc}})
-        dirs[:] = []
+        if entry.is_symlink() or entry.is_dir():
+            append_skill(entry.path)
+            if not entry.is_symlink():
+                for current, dirs, files in os.walk(entry.path):
+                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+                    if 'SKILL.md' in files:
+                        append_skill(current)
+                    dirs[:] = []
 print(json.dumps({{'available': available, 'skills': items}}, ensure_ascii=False))
 "#
     );

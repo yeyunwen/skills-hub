@@ -2,6 +2,25 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 export type AgentKind = "codex" | "claude" | "cursor" | "openclaw";
 export type SyncMethod = "auto" | "symlink" | "copy";
+export type EnvironmentKind = "local" | "remote";
+
+export interface EnvironmentSummary {
+  id: string;
+  name: string;
+  kind: EnvironmentKind;
+  host?: string | null;
+  user?: string | null;
+  port?: number | null;
+}
+
+export interface EnvironmentCapabilities {
+  ssh: boolean;
+  rsync: boolean;
+  git: boolean;
+  python3: boolean;
+  skh: boolean;
+  message?: string | null;
+}
 
 export interface DashboardDto {
   hubCount: number;
@@ -271,6 +290,57 @@ export interface HubConfig {
   cacheDir?: string;
   logs_dir?: string;
   logsDir?: string;
+  agents?: Record<string, unknown>;
+  remotes?: Record<string, unknown>;
+  sources?: Record<string, unknown>;
+  default_sync_method?: SyncMethod;
+  defaultSyncMethod?: SyncMethod;
+}
+
+export interface EnvironmentSnapshot {
+  environment: EnvironmentSummary;
+  capabilities: EnvironmentCapabilities;
+  hub: SkillInfo[];
+  agents: AgentScanResult[];
+  statuses: SkillStatus[];
+  sources: SkillSource[];
+  config: HubConfig;
+}
+
+export type EnvironmentCompareStatus = "identical" | "source-only" | "target-only" | "different";
+
+export interface EnvironmentCompareItem {
+  skill_name?: string;
+  skillName?: string;
+  status: EnvironmentCompareStatus;
+  source_path?: string | null;
+  sourcePath?: string | null;
+  target_path?: string | null;
+  targetPath?: string | null;
+}
+
+export interface EnvironmentCompareResult {
+  source: EnvironmentSummary;
+  target: EnvironmentSummary;
+  items: EnvironmentCompareItem[];
+}
+
+export interface EnvironmentTransferResult {
+  source: EnvironmentSummary;
+  target: EnvironmentSummary;
+  skill_name?: string;
+  skillName?: string;
+  status: "transferred" | "conflict" | "dry-run";
+  backup_path?: string | null;
+  backupPath?: string | null;
+}
+
+export interface EnvironmentTrashResult {
+  environment: EnvironmentSummary;
+  skill_name?: string;
+  skillName?: string;
+  trash_path?: string;
+  trashPath?: string;
 }
 
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -340,6 +410,8 @@ let mockSources: SkillSource[] = [
   { id: "team-skills", url: "git@gitlab.example.com:ai/team-skills.git", kind: "gitlab" },
   { id: "community", url: "https://github.com/example/agent-skills.git", kind: "github" },
 ];
+const mockRemoteSources: Record<string, SkillSource[]> = {};
+const mockInstalledSourceSkills: Record<string, Set<string>> = {};
 let mockRemotes: RemoteHost[] = [{ name: "office-mac", host: "office-mac.local", user: "demo" }];
 let mockPreferences: HubPreferences = { defaultSyncMethod: "auto" };
 
@@ -363,6 +435,168 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
       } as T;
     case "get_logs_dir":
       return "/Users/demo/.agents/skills-hub/logs" as T;
+    case "list_environments":
+      return [
+        { id: "local", name: "本机", kind: "local" },
+        ...mockRemotes.map((remote) => ({
+          id: `remote:${remote.name}`,
+          name: remote.name,
+          kind: "remote",
+          host: remote.host,
+          user: remote.user,
+          port: remote.port,
+        })),
+      ] as T;
+    case "get_environment_snapshot": {
+      const environmentId = String(input.environmentId ?? "local");
+      const remote = mockRemotes.find((item) => `remote:${item.name}` === environmentId);
+      if (!remote) {
+        return {
+          environment: { id: "local", name: "本机", kind: "local" },
+          capabilities: { ssh: true, rsync: true, git: true, python3: true, skh: true },
+          hub: mockHub,
+          agents: mockAgents,
+          statuses: mockStatuses,
+          sources: mockSources,
+          config: {
+            hubDir: "/Users/demo/.agents/skills",
+            configPath: "/Users/demo/.agents/skills-hub/config.json",
+            backupsDir: "/Users/demo/.agents/skills-hub-backups",
+          },
+        } as T;
+      }
+      const remoteHub = mockHub.map((skill) => ({
+        ...skill,
+        path: `/Users/demo/.agents/skills/${dirName(skill)}`,
+        skillFile: `/Users/demo/.agents/skills/${dirName(skill)}/SKILL.md`,
+      }));
+      return {
+        environment: { id: environmentId, name: remote.name, kind: "remote", host: remote.host, user: remote.user, port: remote.port },
+        capabilities: { ssh: true, rsync: true, git: true, python3: true, skh: false },
+        hub: remoteHub,
+        agents: mockAgents.map((group) => ({
+          ...group,
+          skillsDir: `/Users/demo/.${group.agent}/skills`,
+          skills: group.skills.map((skill) => ({ ...skill, path: `/Users/demo/.${group.agent}/skills/${dirName(skill)}` })),
+        })),
+        statuses: mockStatuses.map((status) => ({
+          ...status,
+          hubPath: `/Users/demo/.agents/skills/${status.skillName ?? status.skill_name}`,
+        })),
+        sources: mockRemoteSources[environmentId] ?? [],
+        config: {
+          hubDir: "~/.agents/skills",
+          configPath: "~/.config/skills-hub/config.json",
+          backupsDir: "~/.config/skills-hub/backups",
+        },
+      } as T;
+    }
+    case "check_environment_connection":
+      return { name: String(args?.environmentId ?? "local"), status: "connected", message: null } as T;
+    case "compare_environments":
+      return {
+        source: { id: String(input.sourceEnvironmentId), name: "来源", kind: "local" },
+        target: { id: String(input.targetEnvironmentId), name: "目标", kind: "remote" },
+        items: mockHub.map((skill, index) => ({
+          skillName: dirName(skill),
+          status: index === 1 ? "different" : index === 4 ? "source-only" : "identical",
+        })),
+      } as T;
+    case "transfer_skills":
+      return ((input.skillNames as string[] | undefined) ?? []).map((skillName) => ({
+        source: { id: String(input.sourceEnvironmentId), name: "来源", kind: "local" },
+        target: { id: String(input.targetEnvironmentId), name: "目标", kind: "remote" },
+        skillName,
+        status: "transferred",
+      })) as T;
+    case "link_environment_skill":
+    case "unlink_environment_skill": {
+      const skillName = String(input.skillName ?? "");
+      const tools = (input.tools as AgentKind[] | undefined) ?? [];
+      const nextStatus = command === "link_environment_skill" ? "linked" : "missing";
+      mockStatuses = mockStatuses.map((status) => {
+        if ((status.skillName ?? status.skill_name) !== skillName) return status;
+        return {
+          ...status,
+          agents: status.agents.map((item) => tools.includes(item.agent) ? { ...item, status: nextStatus } : item),
+        };
+      });
+      return tools.map((agent) => ({
+        agent,
+        status: command === "link_environment_skill" ? "linked" : "unlinked",
+        path: `/Users/demo/.${agent}/skills/${skillName}`,
+        targetPath: `/Users/demo/.agents/skills/${skillName}`,
+        method: input.syncMethod ?? "auto",
+      })) as T;
+    }
+    case "takeover_environment_skill":
+      return {
+        agent: ((input.tools as AgentKind[] | undefined) ?? ["codex"])[0],
+        skillName: String(input.skillName),
+        path: "",
+        targetPath: "",
+        backupPath: "/Users/demo/.agents/skills-hub-backups/conflict",
+        status: "linked",
+        method: input.syncMethod ?? "auto",
+      } as T;
+    case "add_environment_source": {
+      const environmentId = String(input.environmentId ?? "local");
+      const url = String(input.url ?? "");
+      const source = { id: String(input.id || url.split("/").pop()?.replace(/\.git$/, "") || "skills"), url, branch: input.branch as string | undefined, kind: url.includes("gitlab") ? "gitlab" : "github" };
+      if (environmentId === "local") mockSources = [...mockSources, source];
+      else mockRemoteSources[environmentId] = [...(mockRemoteSources[environmentId] ?? []), source];
+      return source as T;
+    }
+    case "remove_environment_source": {
+      const environmentId = String(input.environmentId ?? "local");
+      const sourceRef = String(input.sourceRef ?? "");
+      const sources = environmentId === "local" ? mockSources : (mockRemoteSources[environmentId] ?? []);
+      const source = sources.find((item) => item.id === sourceRef) ?? null;
+      if (environmentId === "local") mockSources = sources.filter((item) => item.id !== sourceRef);
+      else mockRemoteSources[environmentId] = sources.filter((item) => item.id !== sourceRef);
+      return source as T;
+    }
+    case "scan_environment_source": {
+      const environmentId = String(input.environmentId ?? "local");
+      const sourceRef = String(input.sourceRef ?? "");
+      const sources = environmentId === "local" ? mockSources : (mockRemoteSources[environmentId] ?? []);
+      const installed = mockInstalledSourceSkills[`${environmentId}:${sourceRef}`] ?? new Set<string>();
+      return {
+        source: sources.find((item) => item.id === sourceRef) ?? sources[0],
+        root: "/tmp/skills-source",
+        skills: [
+          { name: "react-review", sourcePath: "skills/react-review", description: "React 代码审查", installed: installed.has("react-review") },
+          { name: "release-notes", sourcePath: "skills/release-notes", description: "生成发布说明", installed: true },
+          { name: "incident-helper", sourcePath: "skills/incident-helper", description: "故障排查流程", installed: installed.has("incident-helper") },
+        ],
+      } as T;
+    }
+    case "install_environment_source": {
+      const environmentId = String(input.environmentId ?? "local");
+      const sourceRef = String(input.sourceRef ?? "");
+      const names = input.all ? ["react-review", "incident-helper"] : ((input.skills as string[] | undefined) ?? []);
+      const installed = mockInstalledSourceSkills[`${environmentId}:${sourceRef}`] ?? new Set<string>();
+      names.forEach((name) => installed.add(name));
+      mockInstalledSourceSkills[`${environmentId}:${sourceRef}`] = installed;
+      return {
+        installed: names.map((name) => ({ name, sourcePath: `skills/${name}`, installed: true })),
+        skipped: [],
+      } as T;
+    }
+    case "trash_environment_skill": {
+      const skillName = String(input.skillName ?? "");
+      mockHub = mockHub.filter((skill) => dirName(skill) !== skillName && skill.name !== skillName);
+      mockStatuses = mockStatuses.filter((status) => (status.skillName ?? status.skill_name) !== skillName);
+      mockAgents = mockAgents.map((group) => ({
+        ...group,
+        skills: group.skills.filter((skill) => dirName(skill) !== skillName && skill.name !== skillName),
+      }));
+      return {
+        environment: { id: String(input.environmentId ?? "local"), name: "当前环境", kind: "local" },
+        skillName,
+        trashPath: `/Users/demo/.config/skills-hub/backups/trash/20260802-120000/${skillName}`,
+      } as T;
+    }
     case "scan_all":
       return { hub: mockHub, agents: mockAgents } as T;
     case "list_status":
@@ -494,6 +728,58 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
 export const api = {
   initHub: () => invoke<HubConfig>("init_hub"),
   getLogsDir: () => invoke<string>("get_logs_dir"),
+  listEnvironments: () => invoke<EnvironmentSummary[]>("list_environments"),
+  getEnvironmentSnapshot: (environmentId: string, tools: AgentKind[] = ["codex", "claude", "cursor", "openclaw"]) =>
+    invoke<EnvironmentSnapshot>("get_environment_snapshot", { input: { environmentId, tools } }),
+  checkEnvironmentConnection: (environmentId: string) =>
+    invoke<RemoteConnectionStatus>("check_environment_connection", { environmentId }),
+  compareEnvironments: (input: { sourceEnvironmentId: string; targetEnvironmentId: string }) =>
+    invoke<EnvironmentCompareResult>("compare_environments", { input }),
+  transferSkills: (input: {
+    sourceEnvironmentId: string;
+    targetEnvironmentId: string;
+    skillNames: string[];
+    force?: boolean;
+    dryRun?: boolean;
+  }) => invoke<EnvironmentTransferResult[]>("transfer_skills", { input }),
+  linkEnvironmentSkill: (input: {
+    environmentId: string;
+    skillName: string;
+    tools: AgentKind[];
+    force?: boolean;
+    dryRun?: boolean;
+    syncMethod?: SyncMethod;
+  }) => invoke<LinkTargetResult[]>("link_environment_skill", { input }),
+  unlinkEnvironmentSkill: (input: {
+    environmentId: string;
+    skillName: string;
+    tools: AgentKind[];
+    dryRun?: boolean;
+    syncMethod?: SyncMethod;
+  }) => invoke<LinkTargetResult[]>("unlink_environment_skill", { input }),
+  takeoverEnvironmentSkill: (input: {
+    environmentId: string;
+    skillName: string;
+    tools: AgentKind[];
+    dryRun?: boolean;
+    syncMethod?: SyncMethod;
+  }) => invoke<TakeoverResult>("takeover_environment_skill", { input }),
+  trashEnvironmentSkill: (input: { environmentId: string; skillName: string; dryRun?: boolean }) =>
+    invoke<EnvironmentTrashResult>("trash_environment_skill", { input }),
+  addEnvironmentSource: (input: { environmentId: string; id?: string; url: string; branch?: string; dryRun?: boolean }) =>
+    invoke<SkillSource>("add_environment_source", { input }),
+  removeEnvironmentSource: (input: { environmentId: string; sourceRef: string; dryRun?: boolean }) =>
+    invoke<SkillSource | null>("remove_environment_source", { input }),
+  scanEnvironmentSource: (input: { environmentId: string; sourceRef: string; dryRun?: boolean }) =>
+    invoke<SourceScanResult>("scan_environment_source", { input }),
+  installEnvironmentSource: (input: {
+    environmentId: string;
+    sourceRef: string;
+    skills: string[];
+    all: boolean;
+    force: boolean;
+    dryRun?: boolean;
+  }) => invoke<InstallResult>("install_environment_source", { input }),
   dashboard: () => invoke<DashboardDto>("get_dashboard"),
   listSources: () => invoke<SkillSource[]>("list_sources"),
   addSource: (input: { id?: string; url: string; branch?: string }) =>
