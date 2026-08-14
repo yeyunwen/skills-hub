@@ -1,7 +1,5 @@
 import type { AgentKind, ScanAllResult, SkillAgentStatus, SkillInfo, SkillStatus } from "@/lib/api";
 
-export const AGENTS = ["codex", "claude", "cursor", "openclaw"] as AgentKind[];
-
 export interface SkillRowView {
   name: string;
   displayName: string;
@@ -50,7 +48,7 @@ export function buildMigrationSummaries(scan?: ScanAllResult): MigrationSummary[
     hubNames.add(skill.name);
   }
 
-  return AGENTS.map((agent) => {
+  return (scan?.agents.map((item) => item.agent) ?? []).map((agent) => {
     const result = scan?.agents.find((item) => item.agent === agent);
     const skills = result?.skills ?? [];
     const inHubCount = skills.filter((skill) => {
@@ -78,7 +76,7 @@ export function buildMigrationSummaries(scan?: ScanAllResult): MigrationSummary[
 }
 
 export function buildAgentInventory(scan?: ScanAllResult) {
-  return AGENTS.map((agent) => {
+  return (scan?.agents.map((item) => item.agent) ?? []).map((agent) => {
     const result = scan?.agents.find((item) => item.agent === agent);
     return {
       agent,
@@ -164,7 +162,7 @@ export function buildWorkspaceOverview(scan?: ScanAllResult, statuses?: SkillSta
 
   const conflicts: ToolConflictView[] = [];
   const summaryByAgent = new Map<AgentKind, ToolEnablementSummary>();
-  for (const agent of AGENTS) {
+  for (const agent of scan?.agents.map((item) => item.agent) ?? []) {
     summaryByAgent.set(agent, { agent, total: scan?.hub.length ?? 0, enabled: 0, missing: 0, conflicts: 0 });
   }
 

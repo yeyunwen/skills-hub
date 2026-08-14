@@ -1,6 +1,6 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 
-export type AgentKind = "codex" | "claude" | "cursor" | "openclaw";
+export type AgentKind = string;
 export type SyncMethod = "auto" | "symlink" | "copy";
 export type EnvironmentKind = "local" | "remote";
 
@@ -20,17 +20,6 @@ export interface EnvironmentCapabilities {
   python3: boolean;
   skh: boolean;
   message?: string | null;
-}
-
-export interface DashboardDto {
-  hubCount: number;
-  sourceCount: number;
-  codexCount: number;
-  claudeCount: number;
-  cursorCount: number;
-  openclawCount: number;
-  conflictCount: number;
-  missingCount: number;
 }
 
 export interface SkillSource {
@@ -196,6 +185,17 @@ export interface DiscoveredSshHost {
 export interface HubPreferences {
   default_sync_method?: SyncMethod;
   defaultSyncMethod?: SyncMethod;
+  hub_dir?: string;
+  hubDir?: string;
+  agents: AgentConfig[];
+}
+
+export interface AgentConfig {
+  kind: AgentKind;
+  label: string;
+  skills_dir?: string;
+  skillsDir?: string;
+  enabled: boolean;
 }
 
 export interface RemoteSkillStatus {
@@ -290,7 +290,7 @@ export interface HubConfig {
   cacheDir?: string;
   logs_dir?: string;
   logsDir?: string;
-  agents?: Record<string, unknown>;
+  agents?: Record<string, AgentConfig>;
   remotes?: Record<string, unknown>;
   sources?: Record<string, unknown>;
   default_sync_method?: SyncMethod;
@@ -344,64 +344,79 @@ export interface EnvironmentTrashResult {
 }
 
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const MOCK_HOME = "/mock/home";
+const MOCK_HUB_DIR = `${MOCK_HOME}/.cc-switch/skills`;
+const mockPath = (path: string) => `${MOCK_HOME}/${path.replace(/^\//, "")}`;
 
 let mockHub: SkillInfo[] = [
-  { name: "browser", path: "/Users/demo/.agents/skills/browser", description: "浏览器自动化与页面检查" },
-  { name: "github", path: "/Users/demo/.agents/skills/github", description: "GitHub 仓库、Issue 与 PR 工作流" },
-  { name: "documents", path: "/Users/demo/.agents/skills/documents", description: "创建和编辑 Word 文档" },
-  { name: "product-design", path: "/Users/demo/.agents/skills/product-design", description: "产品体验审计与原型设计" },
-  { name: "debug", path: "/Users/demo/.agents/skills/debug", description: "运行时问题定位与验证" },
+  { name: "browser", path: `${MOCK_HUB_DIR}/browser`, description: "浏览器自动化与页面检查" },
+  { name: "github", path: `${MOCK_HUB_DIR}/github`, description: "GitHub 仓库、Issue 与 PR 工作流" },
+  { name: "documents", path: `${MOCK_HUB_DIR}/documents`, description: "创建和编辑 Word 文档" },
+  { name: "product-design", path: `${MOCK_HUB_DIR}/product-design`, description: "产品体验审计与原型设计" },
+  { name: "debug", path: `${MOCK_HUB_DIR}/debug`, description: "运行时问题定位与验证" },
 ];
+
+const mockAgentConfigs: AgentConfig[] = [
+  { kind: "agents", label: "通用 Agent / Lark", skillsDir: mockPath(".agents/skills"), enabled: true },
+  { kind: "claude", label: "Claude", skillsDir: mockPath(".claude/skills"), enabled: true },
+  { kind: "codex", label: "Codex", skillsDir: mockPath(".codex/skills"), enabled: true },
+  { kind: "continue", label: "Continue", skillsDir: mockPath(".continue/skills"), enabled: true },
+  { kind: "cursor", label: "Cursor", skillsDir: mockPath(".cursor/skills"), enabled: false },
+  { kind: "hermes", label: "Hermes", skillsDir: mockPath(".hermes/skills"), enabled: true },
+  { kind: "openclaw", label: "OpenClaw", skillsDir: mockPath(".openclaw/skills"), enabled: true },
+  { kind: "qoder", label: "Qoder", skillsDir: mockPath(".qoder/skills"), enabled: true },
+  { kind: "trae", label: "Trae", skillsDir: mockPath(".trae/skills"), enabled: true },
+  { kind: "windsurf", label: "Windsurf", skillsDir: mockPath(".codeium/windsurf/skills"), enabled: true },
+  { kind: "zode", label: "Zode", skillsDir: mockPath(".zode/skills"), enabled: true },
+];
+
+function mockAgentSkillsDir(agent: AgentKind) {
+  return mockAgentConfigs.find((item) => item.kind === agent)?.skillsDir ?? mockPath(`.${agent}/skills`);
+}
 
 let mockAgents: AgentScanResult[] = [
   {
     agent: "codex",
-    skillsDir: "/Users/demo/.codex/skills",
+    skillsDir: mockPath(".codex/skills"),
     skills: [
-      { ...mockHub[0], path: "/Users/demo/.codex/skills/browser", isSymlink: true },
-      { ...mockHub[1], path: "/Users/demo/.codex/skills/github", isSymlink: true },
-      { name: "private-release", path: "/Users/demo/.codex/skills/private-release", description: "尚未迁移的内部发布流程" },
-      { name: "workspace-task", path: "/Users/demo/.codex/skills/workspace-task", description: "由外部项目维护的 Skill", isSymlink: true, symlinkTarget: "/Users/demo/projects/workspace/skills/workspace-task" },
+      { ...mockHub[0], path: mockPath(".codex/skills/browser"), isSymlink: true },
+      { ...mockHub[1], path: mockPath(".codex/skills/github"), isSymlink: true },
+      { name: "private-release", path: mockPath(".codex/skills/private-release"), description: "尚未迁移的内部发布流程" },
+      { name: "workspace-task", path: mockPath(".codex/skills/workspace-task"), description: "由外部项目维护的 Skill", isSymlink: true, symlinkTarget: mockPath("projects/workspace/skills/workspace-task") },
     ],
   },
   {
     agent: "claude",
-    skillsDir: "/Users/demo/.claude/skills",
+    skillsDir: mockPath(".claude/skills"),
     skills: [
-      { ...mockHub[2], path: "/Users/demo/.claude/skills/documents", isSymlink: true },
-      { name: "prompt-auditor", path: "/Users/demo/.claude/skills/prompt-auditor", description: "尚未迁移的提示词审计 Skill" },
-      { name: "pc-shared-init-entry", path: "/Users/demo/.claude/skills/pc-shared-init-entry", description: "由外部工作区维护的 Skill", isSymlink: true, symlinkTarget: "/Users/demo/projects/pc-shared/skills/init-entry" },
-    ],
-  },
-  {
-    agent: "cursor",
-    skillsDir: "/Users/demo/.cursor/skills",
-    skills: [
-      { ...mockHub[0], path: "/Users/demo/.cursor/skills/browser", isSymlink: true },
-      { name: "github", path: "/Users/demo/.cursor/skills/github", description: "与 Hub 同名的本地真实目录" },
+      { ...mockHub[2], path: mockPath(".claude/skills/documents"), isSymlink: true },
+      { name: "prompt-auditor", path: mockPath(".claude/skills/prompt-auditor"), description: "尚未迁移的提示词审计 Skill" },
+      { name: "pc-shared-init-entry", path: mockPath(".claude/skills/pc-shared-init-entry"), description: "由外部工作区维护的 Skill", isSymlink: true, symlinkTarget: mockPath("projects/pc-shared/skills/init-entry") },
     ],
   },
   {
     agent: "openclaw",
-    skillsDir: "/Users/demo/.openclaw/skills",
+    skillsDir: mockPath(".openclaw/skills"),
     skills: [],
   },
+  ...mockAgentConfigs
+    .filter((agent) => agent.enabled && !["codex", "claude", "openclaw"].includes(agent.kind))
+    .map((agent) => ({ agent: agent.kind, skillsDir: agent.skillsDir ?? "", skills: [] })),
 ];
 
 let mockStatuses: SkillStatus[] = mockHub.map((skill) => ({
   skillName: skill.name,
   hubPath: skill.path,
-  agents: (["codex", "claude", "cursor", "openclaw"] as AgentKind[]).map((agent) => {
+  agents: mockAgents.map(({ agent, skillsDir }) => {
     const linked =
-      (skill.name === "browser" && (agent === "codex" || agent === "cursor")) ||
+      (skill.name === "browser" && agent === "codex") ||
       (skill.name === "github" && agent === "codex") ||
       (skill.name === "documents" && agent === "claude");
-    const conflict = skill.name === "github" && agent === "cursor";
     return {
       agent,
-      status: conflict ? "conflict" : linked ? "linked" : "missing",
-      path: `/Users/demo/.${agent}/skills/${skill.name}`,
-      targetPath: conflict ? null : skill.path,
+      status: linked ? "linked" : "missing",
+      path: `${skillsDir}/${skill.name}`,
+      targetPath: skill.path,
     };
   }),
 }));
@@ -412,8 +427,12 @@ let mockSources: SkillSource[] = [
 ];
 const mockRemoteSources: Record<string, SkillSource[]> = {};
 const mockInstalledSourceSkills: Record<string, Set<string>> = {};
-let mockRemotes: RemoteHost[] = [{ name: "office-mac", host: "office-mac.local", user: "demo" }];
-let mockPreferences: HubPreferences = { defaultSyncMethod: "auto" };
+let mockRemotes: RemoteHost[] = [];
+let mockPreferences: HubPreferences = {
+  defaultSyncMethod: "auto",
+  hubDir: MOCK_HUB_DIR,
+  agents: mockAgentConfigs,
+};
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (isTauriRuntime) return tauriInvoke<T>(command, args);
@@ -426,15 +445,15 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
   switch (command) {
     case "init_hub":
       return {
-        hubDir: "/Users/demo/.agents/skills",
-        configPath: "/Users/demo/.agents/skills-hub/config.json",
-        lockPath: "/Users/demo/.agents/skills-hub/lock.json",
-        backupsDir: "/Users/demo/.agents/skills-hub-backups",
-        cacheDir: "/Users/demo/.agents/skills-hub/cache",
-        logsDir: "/Users/demo/.agents/skills-hub/logs",
+        hubDir: MOCK_HUB_DIR,
+        configPath: mockPath(".config/skills-hub/config.json"),
+        lockPath: mockPath(".config/skills-hub/lock.json"),
+        backupsDir: mockPath(".config/skills-hub/backups"),
+        cacheDir: mockPath(".cache/skills-hub/sources"),
+        logsDir: mockPath(".config/skills-hub/logs"),
       } as T;
     case "get_logs_dir":
-      return "/Users/demo/.agents/skills-hub/logs" as T;
+      return mockPath(".config/skills-hub/logs") as T;
     case "list_environments":
       return [
         { id: "local", name: "本机", kind: "local" },
@@ -459,16 +478,16 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
           statuses: mockStatuses,
           sources: mockSources,
           config: {
-            hubDir: "/Users/demo/.agents/skills",
-            configPath: "/Users/demo/.agents/skills-hub/config.json",
-            backupsDir: "/Users/demo/.agents/skills-hub-backups",
+            hubDir: MOCK_HUB_DIR,
+            configPath: mockPath(".config/skills-hub/config.json"),
+            backupsDir: mockPath(".config/skills-hub/backups"),
           },
         } as T;
       }
       const remoteHub = mockHub.map((skill) => ({
         ...skill,
-        path: `/Users/demo/.agents/skills/${dirName(skill)}`,
-        skillFile: `/Users/demo/.agents/skills/${dirName(skill)}/SKILL.md`,
+        path: `${MOCK_HUB_DIR}/${dirName(skill)}`,
+        skillFile: `${MOCK_HUB_DIR}/${dirName(skill)}/SKILL.md`,
       }));
       return {
         environment: { id: environmentId, name: remote.name, kind: "remote", host: remote.host, user: remote.user, port: remote.port },
@@ -476,16 +495,16 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
         hub: remoteHub,
         agents: mockAgents.map((group) => ({
           ...group,
-          skillsDir: `/Users/demo/.${group.agent}/skills`,
-          skills: group.skills.map((skill) => ({ ...skill, path: `/Users/demo/.${group.agent}/skills/${dirName(skill)}` })),
+          skillsDir: mockAgentSkillsDir(group.agent),
+          skills: group.skills.map((skill) => ({ ...skill, path: `${mockAgentSkillsDir(group.agent)}/${dirName(skill)}` })),
         })),
         statuses: mockStatuses.map((status) => ({
           ...status,
-          hubPath: `/Users/demo/.agents/skills/${status.skillName ?? status.skill_name}`,
+          hubPath: `${MOCK_HUB_DIR}/${status.skillName ?? status.skill_name}`,
         })),
         sources: mockRemoteSources[environmentId] ?? [],
         config: {
-          hubDir: "~/.agents/skills",
+          hubDir: "~/.cc-switch/skills",
           configPath: "~/.config/skills-hub/config.json",
           backupsDir: "~/.config/skills-hub/backups",
         },
@@ -524,8 +543,8 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
       return tools.map((agent) => ({
         agent,
         status: command === "link_environment_skill" ? "linked" : "unlinked",
-        path: `/Users/demo/.${agent}/skills/${skillName}`,
-        targetPath: `/Users/demo/.agents/skills/${skillName}`,
+        path: `${mockAgentSkillsDir(agent)}/${skillName}`,
+        targetPath: `${MOCK_HUB_DIR}/${skillName}`,
         method: input.syncMethod ?? "auto",
       })) as T;
     }
@@ -535,7 +554,7 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
         skillName: String(input.skillName),
         path: "",
         targetPath: "",
-        backupPath: "/Users/demo/.agents/skills-hub-backups/conflict",
+        backupPath: mockPath(".config/skills-hub/backups/conflict"),
         status: "linked",
         method: input.syncMethod ?? "auto",
       } as T;
@@ -594,7 +613,7 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
       return {
         environment: { id: String(input.environmentId ?? "local"), name: "当前环境", kind: "local" },
         skillName,
-        trashPath: `/Users/demo/.config/skills-hub/backups/trash/20260802-120000/${skillName}`,
+        trashPath: mockPath(`.config/skills-hub/backups/trash/20260802-120000/${skillName}`),
       } as T;
     }
     case "scan_all":
@@ -630,8 +649,26 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
     case "get_preferences":
       return mockPreferences as T;
     case "update_preferences":
-      mockPreferences = { defaultSyncMethod: input.defaultSyncMethod as SyncMethod };
+      mockPreferences = { ...mockPreferences, defaultSyncMethod: input.defaultSyncMethod as SyncMethod };
       return mockPreferences as T;
+    case "update_hub_dir":
+      mockPreferences = { ...mockPreferences, hubDir: String(input.hubDir) };
+      return { hubDir: mockPreferences.hubDir } as T;
+    case "upsert_agent": {
+      const agent: AgentConfig = {
+        kind: String(input.id),
+        label: String(input.label),
+        skillsDir: String(input.skillsDir),
+        enabled: Boolean(input.enabled),
+      };
+      mockPreferences = { ...mockPreferences, agents: [...mockPreferences.agents.filter((item) => item.kind !== agent.kind), agent] };
+      return agent as T;
+    }
+    case "remove_agent": {
+      const removed = mockPreferences.agents.find((agent) => agent.kind === input.id) ?? null;
+      mockPreferences = { ...mockPreferences, agents: mockPreferences.agents.filter((agent) => agent.kind !== input.id) };
+      return removed as T;
+    }
     case "list_remotes":
       return mockRemotes as T;
     case "discover_ssh_hosts":
@@ -658,20 +695,20 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
         agents: (["codex", "claude", "cursor", "openclaw"] as AgentKind[]).map((agent) => ({
           agent,
           available: agent !== "openclaw",
-          skillsDir: `/Users/demo/.${agent}/skills`,
+          skillsDir: mockAgentSkillsDir(agent),
           skills: [],
         })),
         statuses: [
-          { skillName: "browser", agent: "codex", status: "synced", remotePath: "/Users/demo/.codex/skills/browser" },
+          { skillName: "browser", agent: "codex", status: "synced", remotePath: mockPath(".codex/skills/browser") },
           { skillName: "github", agent: "codex", status: "missing", remotePath: null },
-          { skillName: "remote-private", agent: "claude", status: "remote-only", remotePath: "/Users/demo/.claude/skills/remote-private" },
+          { skillName: "remote-private", agent: "claude", status: "remote-only", remotePath: mockPath(".claude/skills/remote-private") },
         ],
       } as T;
     case "remote_sync":
       return {
         remote: mockRemotes.find((item) => item.name === input.name) ?? mockRemotes[0],
         agents: input.tools ?? [],
-        sourceDir: "/Users/demo/.agents/skills",
+        sourceDir: MOCK_HUB_DIR,
         remoteHubDir: "~/.agents/skills",
         syncMethod: input.syncMethod ?? "auto",
         commands: [["rsync"], ["ssh"]],
@@ -681,9 +718,9 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
     case "unlink_skill_from_agents":
       return [] as T;
     case "takeover_agent_skill":
-      return { agent: input.agent, skillName: input.skillName, path: "", backupPath: "/Users/demo/.agents/skills-hub-backups/github", status: "linked", method: input.syncMethod ?? "auto" } as T;
+      return { agent: input.agent, skillName: input.skillName, path: "", backupPath: mockPath(".config/skills-hub/backups/github"), status: "linked", method: input.syncMethod ?? "auto" } as T;
     case "remove_agent_skill":
-      return { agent: input.agent, skillName: input.skillName, path: "", backupPath: "/Users/demo/.agents/skills-hub-backups/skill", status: "unlinked" } as T;
+      return { agent: input.agent, skillName: input.skillName, path: "", backupPath: mockPath(".config/skills-hub/backups/skill"), status: "unlinked" } as T;
     case "migrate_from_agent":
       return { from: input.from, migrated: true } as T;
     case "remote_sync_skill":
@@ -691,7 +728,7 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
     case "remote_sync_local_agent_skill":
       return { remote: mockRemotes[0], agent: input.targetAgent, skillName: input.skillName, status: "linked" } as T;
     case "remote_import_skill":
-      return { remote: mockRemotes[0], agent: input.agent, skillName: input.skillName, hubPath: `/Users/demo/.agents/skills/${String(input.skillName)}`, imported: true } as T;
+      return { remote: mockRemotes[0], agent: input.agent, skillName: input.skillName, hubPath: `${MOCK_HUB_DIR}/${String(input.skillName)}`, imported: true } as T;
     case "remote_remove_skill":
       return { remote: mockRemotes[0], agent: input.agent, skillName: input.skillName, removed: true } as T;
     case "remove_hub_skill": {
@@ -729,7 +766,7 @@ export const api = {
   initHub: () => invoke<HubConfig>("init_hub"),
   getLogsDir: () => invoke<string>("get_logs_dir"),
   listEnvironments: () => invoke<EnvironmentSummary[]>("list_environments"),
-  getEnvironmentSnapshot: (environmentId: string, tools: AgentKind[] = ["codex", "claude", "cursor", "openclaw"]) =>
+  getEnvironmentSnapshot: (environmentId: string, tools?: AgentKind[]) =>
     invoke<EnvironmentSnapshot>("get_environment_snapshot", { input: { environmentId, tools } }),
   checkEnvironmentConnection: (environmentId: string) =>
     invoke<RemoteConnectionStatus>("check_environment_connection", { environmentId }),
@@ -780,7 +817,6 @@ export const api = {
     force: boolean;
     dryRun?: boolean;
   }) => invoke<InstallResult>("install_environment_source", { input }),
-  dashboard: () => invoke<DashboardDto>("get_dashboard"),
   listSources: () => invoke<SkillSource[]>("list_sources"),
   addSource: (input: { id?: string; url: string; branch?: string }) =>
     invoke<SkillSource>("add_source", { input }),
@@ -857,6 +893,10 @@ export const api = {
   getPreferences: () => invoke<HubPreferences>("get_preferences"),
   updatePreferences: (input: { defaultSyncMethod: SyncMethod }) =>
     invoke<HubPreferences>("update_preferences", { input }),
+  updateHubDir: (hubDir: string) => invoke<HubConfig>("update_hub_dir", { input: { hubDir } }),
+  upsertAgent: (input: { id: string; label: string; skillsDir: string; enabled: boolean }) =>
+    invoke<AgentConfig>("upsert_agent", { input }),
+  removeAgent: (id: string) => invoke<AgentConfig | null>("remove_agent", { input: { id } }),
 };
 
 export function dirName(skill: SkillInfo) {

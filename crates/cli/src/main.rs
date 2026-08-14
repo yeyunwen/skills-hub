@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 use console::{style, Term};
 use inquire::MultiSelect;
 use skills_hub_core::*;
@@ -125,7 +125,7 @@ enum AgentSubcommand {
 
 #[derive(Debug, Args)]
 struct AgentSyncArgs {
-    /// 目标 Agent，逗号分隔：codex,claude,cursor,openclaw。
+    /// 目标 Agent ID，逗号分隔。
     #[arg(long)]
     tools: String,
     /// 同步方式：auto 优先 symlink 失败 copy；symlink 强制链接；copy 强制复制。
@@ -140,7 +140,7 @@ struct AgentSyncArgs {
 struct MigrateArgs {
     /// 来源 Agent。
     #[arg(long)]
-    from: AgentArg,
+    from: String,
     /// 覆盖 hub 中已存在的同名 skill。
     #[arg(long)]
     force: bool,
@@ -192,8 +192,8 @@ struct RemoteListArgs {
     /// 远程设备名称；不传则列出全部远程设备。
     name: Option<String>,
     /// 目标 Agent，逗号分隔。
-    #[arg(long, default_value = "codex,claude,cursor,openclaw")]
-    tools: String,
+    #[arg(long)]
+    tools: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -201,8 +201,8 @@ struct RemoteTargetArgs {
     /// 远程设备名称。
     name: String,
     /// 目标 Agent，逗号分隔。
-    #[arg(long, default_value = "codex,claude,cursor,openclaw")]
-    tools: String,
+    #[arg(long)]
+    tools: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -227,25 +227,6 @@ struct HubCommand {
 enum HubSubcommand {
     /// 列出 hub 中已安装 skills。
     List,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum AgentArg {
-    Codex,
-    Claude,
-    Cursor,
-    Openclaw,
-}
-
-impl From<AgentArg> for AgentKind {
-    fn from(value: AgentArg) -> Self {
-        match value {
-            AgentArg::Codex => AgentKind::Codex,
-            AgentArg::Claude => AgentKind::Claude,
-            AgentArg::Cursor => AgentKind::Cursor,
-            AgentArg::Openclaw => AgentKind::OpenClaw,
-        }
-    }
 }
 
 fn main() -> Result<()> {
@@ -371,6 +352,7 @@ fn handle_agent(ctx: CliContext, command: AgentCommand) -> Result<()> {
 
 fn handle_scan(ctx: CliContext) -> Result<()> {
     let scan = scan_all()?;
+    let hub_dir = load_config()?.hub_dir;
     output(&ctx, &scan, || {
         let total = scan.hub.len()
             + scan
@@ -387,7 +369,7 @@ fn handle_scan(ctx: CliContext) -> Result<()> {
             "  {:9} {:3} {}",
             "hub",
             scan.hub.len(),
-            style("~/.agents/skills").dim()
+            style(display_path(&hub_dir)).dim()
         );
         for agent in &scan.agents {
             println!(
@@ -478,7 +460,11 @@ fn handle_list(ctx: CliContext) -> Result<()> {
 }
 
 fn handle_migrate(ctx: CliContext, args: MigrateArgs) -> Result<()> {
-    let records = migrate_from_agent(args.from.into(), args.force, ctx.dry_run)?;
+    let agent = parse_agents(&args.from)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("agent is required"))?;
+    let records = migrate_from_agent(agent, args.force, ctx.dry_run)?;
     output(&ctx, &records, || {
         println!(
             "{} migrated {} skill(s)",
@@ -505,7 +491,7 @@ fn handle_remote(ctx: CliContext, command: RemoteCommand) -> Result<()> {
         }
         RemoteSubcommand::List(args) => {
             if let Some(name) = args.name {
-                let agents = parse_agents(&args.tools)?;
+                let agents = parse_agents_or_enabled(args.tools.as_deref())?;
                 let list = remote_list(&name, &agents)?;
                 output(&ctx, &list, || print_remote_list(&list))
             } else {
@@ -522,7 +508,7 @@ fn handle_remote(ctx: CliContext, command: RemoteCommand) -> Result<()> {
             }
         }
         RemoteSubcommand::Scan(args) => {
-            let agents = parse_agents(&args.tools)?;
+            let agents = parse_agents_or_enabled(args.tools.as_deref())?;
             let scan = remote_scan(&args.name, &agents)?;
             output(&ctx, &scan, || print_remote_scan(&scan))
         }
@@ -711,14 +697,30 @@ fn parse_sync_method(value: &str) -> Result<SyncMethod> {
 }
 
 fn parse_agents(value: &str) -> Result<Vec<AgentKind>> {
+    let config = load_config()?;
     value
         .split(',')
         .map(|item| {
-            AgentKind::parse(item).ok_or_else(|| {
-                anyhow::anyhow!("unknown agent: {item}; expected codex,claude,cursor,openclaw")
-            })
+            let agent = AgentKind::parse(item)
+                .ok_or_else(|| anyhow::anyhow!("invalid agent id: {item}"))?;
+            if !config.agents.contains_key(&agent) {
+                anyhow::bail!("agent is not configured: {item}");
+            }
+            Ok(agent)
         })
         .collect()
+}
+
+fn parse_agents_or_enabled(value: Option<&str>) -> Result<Vec<AgentKind>> {
+    match value {
+        Some(value) => parse_agents(value),
+        None => Ok(load_config()?
+            .agents
+            .into_values()
+            .filter(|agent| agent.enabled)
+            .map(|agent| agent.kind)
+            .collect()),
+    }
 }
 
 fn ok() -> console::StyledObject<&'static str> {

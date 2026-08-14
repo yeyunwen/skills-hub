@@ -35,13 +35,19 @@ skh --help
 
 ## 目标
 
-- 每个环境拥有独立 Hub：默认是 `~/.agents/skills`
+- 本机和 SSH 环境的 Hub 默认使用 `~/.cc-switch/skills`
 - 支持 GitHub / GitLab / generic Git / SSH Git / 本地目录
 - 先扫描 source 中有多少 skill，再选择性安装
 - 本机 agent 默认通过 symlink 分发
 - SSH 环境通过系统 SSH、rsync 和远端 helper 管理
 - 本机与 SSH 共享同一套 Skills、来源、Agent 和冲突模型
 - 多环境之间支持显式对比和安全传输，不默认建立双向同步
+
+## 界面预览
+
+| 技能总览 | 深色设置页 |
+| --- | --- |
+| ![技能总览](docs/screenshots/skills-overview-light.png) | ![深色设置页](docs/screenshots/settings-dark.png) |
 
 ## 开发环境
 
@@ -150,8 +156,8 @@ skh agent sync --tools codex,claude,cursor,openclaw --sync-method auto
 远程同步采用两段式：
 
 ```txt
-local ~/.agents/skills  --rsync-->  remote ~/.agents/skills
-remote ~/.agents/skills --symlink/copy--> remote agent skills dirs
+local ~/.cc-switch/skills  --rsync-->  remote ~/.cc-switch/skills
+remote ~/.cc-switch/skills --symlink/copy--> remote agent skills dirs
 ```
 
 示例：

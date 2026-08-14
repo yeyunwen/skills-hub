@@ -24,6 +24,40 @@ pub fn expand_path(input: impl AsRef<str>) -> PathBuf {
     }
 }
 
+/// 解析路径中已存在的祖先，统一 `..` 和 symlink 等路径别名。
+pub fn normalize_path(path: impl AsRef<Path>) -> Result<PathBuf> {
+    let absolute = if path.as_ref().is_absolute() {
+        path.as_ref().to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let path = absolute.as_path();
+    let mut existing = path;
+    let mut missing = Vec::new();
+
+    while existing.symlink_metadata().is_err() {
+        let name = existing
+            .file_name()
+            .with_context(|| format!("cannot normalize {}", path.display()))?;
+        missing.push(name.to_os_string());
+        existing = existing
+            .parent()
+            .with_context(|| format!("missing parent for {}", path.display()))?;
+    }
+
+    let mut normalized =
+        fs::canonicalize(existing).with_context(|| format!("resolve {}", existing.display()))?;
+    for component in missing.iter().rev() {
+        normalized.push(component);
+    }
+    Ok(normalized)
+}
+
+/// 判断两个路径是否指向同一位置，包括尚未创建的末级目录。
+pub fn paths_resolve_same(left: impl AsRef<Path>, right: impl AsRef<Path>) -> Result<bool> {
+    Ok(normalize_path(left)? == normalize_path(right)?)
+}
+
 /// 判断路径是否存在；封装成函数是为了让业务逻辑更容易读。
 pub fn path_exists(path: impl AsRef<Path>) -> bool {
     path.as_ref().symlink_metadata().is_ok()
@@ -111,7 +145,17 @@ pub fn is_symlink_to(path: impl AsRef<Path>, target: impl AsRef<Path>) -> Result
     if !meta.file_type().is_symlink() {
         return Ok(false);
     }
-    Ok(fs::canonicalize(path)? == fs::canonicalize(target)?)
+    let resolved_path = match fs::canonicalize(path) {
+        Ok(path) => path,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    let resolved_target = match fs::canonicalize(target) {
+        Ok(path) => path,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    Ok(resolved_path == resolved_target)
 }
 
 /// 把真实路径显示成带 `~` 的短路径，仅用于人类可读输出。
@@ -137,5 +181,37 @@ mod tests {
         let expanded = expand_path("~/.agents/skills");
         assert!(expanded.is_absolute());
         assert!(expanded.ends_with(".agents/skills"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broken_symlink_is_not_treated_as_target_link() {
+        let temp = tempfile::tempdir().unwrap();
+        let link = temp.path().join("broken");
+        std::os::unix::fs::symlink(temp.path().join("missing"), &link).unwrap();
+
+        assert!(!is_symlink_to(&link, temp.path()).unwrap());
+    }
+
+    #[test]
+    fn normalizes_parent_path_alias() {
+        let temp = tempfile::tempdir().unwrap();
+        let skills = temp.path().join("skills");
+        fs::create_dir(&skills).unwrap();
+        let alias = skills.join("..").join("skills");
+
+        assert!(paths_resolve_same(&skills, alias).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn normalizes_symlink_alias() {
+        let temp = tempfile::tempdir().unwrap();
+        let skills = temp.path().join("skills");
+        let alias = temp.path().join("alias");
+        fs::create_dir(&skills).unwrap();
+        std::os::unix::fs::symlink(&skills, &alias).unwrap();
+
+        assert!(paths_resolve_same(&skills, alias).unwrap());
     }
 }
