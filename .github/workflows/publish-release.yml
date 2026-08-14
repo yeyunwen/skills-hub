@@ -1,0 +1,96 @@
+name: Publish Release
+
+run-name: Publish ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Draft release tag to verify and publish (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  attestations: read
+  contents: write
+
+concurrency:
+  group: publish-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+  RELEASE_TAG: ${{ inputs.tag }}
+
+jobs:
+  publish:
+    name: Verify draft and publish
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Require the default branch workflow
+        run: |
+          if [[ "${GITHUB_REF}" != "refs/heads/${DEFAULT_BRANCH}" ]]; then
+            echo "Run this workflow from ${DEFAULT_BRANCH}, not ${GITHUB_REF_NAME}." >&2
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Validate draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/check-version.mjs "${RELEASE_TAG}"
+          is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)"
+          if [[ "${is_draft}" != "true" ]]; then
+            echo "${RELEASE_TAG} is not a draft release. Published immutable releases cannot be rebuilt." >&2
+            exit 1
+          fi
+          git fetch origin "${DEFAULT_BRANCH}" --tags
+          tag_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          if ! git merge-base --is-ancestor "${tag_commit}" "origin/${DEFAULT_BRANCH}"; then
+            echo "Tag ${RELEASE_TAG} is not contained in ${DEFAULT_BRANCH}." >&2
+            exit 1
+          fi
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${RELEASE_TAG}" --dir release-assets
+      - name: Verify asset inventory and checksums
+        run: |
+          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}" --with-checksums
+          cd release-assets
+          sha256sum --check SHA256SUMS
+      - name: Verify GitHub build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while IFS= read -r -d '' asset; do
+            gh attestation verify "${asset}" --repo "${GITHUB_REPOSITORY}"
+          done < <(find release-assets -maxdepth 1 -type f -print0 | sort -z)
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${RELEASE_TAG}" == *-* ]]; then
+            gh release edit "${RELEASE_TAG}" --draft=false --prerelease=true --latest=false
+          else
+            gh release edit "${RELEASE_TAG}" --draft=false --prerelease=false --latest
+          fi
+      - name: Write summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_url="$(gh release view "${RELEASE_TAG}" --json url --jq .url)"
+          {
+            echo "## Release published"
+            echo
+            echo "- Tag: \`${RELEASE_TAG}\`"
+            echo "- URL: ${release_url}"
+            echo "- Checksums and GitHub attestations: verified"
+          } >> "${GITHUB_STEP_SUMMARY}"

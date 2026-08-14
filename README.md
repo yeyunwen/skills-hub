@@ -75,6 +75,8 @@ pnpm install --frozen-lockfile
 pnpm desktop:check
 ```
 
+维护者发布版本时请遵循 [RELEASING.md](RELEASING.md) 中的两阶段流程，不要直接移动已有 Tag 或替换已发布资产。
+
 ## CLI 示例
 
 初始化：

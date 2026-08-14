@@ -1,5 +1,7 @@
 name: Release
 
+run-name: Package ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
 on:
   push:
     tags:
@@ -14,25 +16,43 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 env:
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
   validate:
     name: Validate release
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        with:
-          version: 10.28.0
-          run_install: false
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       - run: node scripts/check-version.mjs "${RELEASE_TAG}"
+      - name: Validate release source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin "${DEFAULT_BRANCH}" --tags
+          git tag --list 'v*' | node scripts/check-release-tag.mjs "${RELEASE_TAG}"
+          tag_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          if ! git merge-base --is-ancestor "${tag_commit}" "origin/${DEFAULT_BRANCH}"; then
+            echo "Tag ${RELEASE_TAG} is not contained in ${DEFAULT_BRANCH}." >&2
+            exit 1
+          fi
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "A release for ${RELEASE_TAG} already exists." >&2
+            exit 1
+          fi
 
   cli:
     name: CLI ${{ matrix.target }}
@@ -50,6 +70,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,6 +126,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             tauri_args: --target x86_64-pc-windows-msvc --bundles nsis,msi --no-sign --ci
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -146,13 +168,15 @@ jobs:
           tauriScript: pnpm tauri
           args: ${{ matrix.tauri_args }}
           releaseAssetNamePattern: skills-hub-v[version]-[platform]-[arch]-unsigned[setup][ext]
+          # Keep scripts/check-release-assets.mjs aligned with this pattern.
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: release-desktop-[platform]-[arch]-[bundle]
 
   release:
-    name: Create draft release
+    name: Create verified draft release
     needs: [cli, desktop]
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     permissions:
       contents: write
       id-token: write
@@ -161,6 +185,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
@@ -170,15 +197,13 @@ jobs:
         run: |
           mkdir release-assets
           find downloaded-assets -type f -exec cp {} release-assets/ \;
-          asset_count="$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          if [ "${asset_count}" -lt 10 ]; then
-            echo "Expected at least 10 CLI and Desktop assets, found ${asset_count}" >&2
-            exit 1
-          fi
+          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}"
       - name: Generate checksums
         run: |
           cd release-assets
-          sha256sum * > SHA256SUMS
+          LC_ALL=C sha256sum * > SHA256SUMS
+          cd ..
+          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}" --with-checksums
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: release-assets/*
@@ -188,7 +213,9 @@ jobs:
         run: |
           release_flags=(
             --draft
+            --fail-on-no-commits
             --generate-notes
+            --notes "$(<.github/release-notes-preamble.md)"
             --title "skills-hub ${RELEASE_TAG}"
             --verify-tag
           )
