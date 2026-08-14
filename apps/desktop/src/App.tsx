@@ -1009,10 +1009,10 @@ function SettingsPage({ environment, theme, onThemeChange }: { environment: Envi
           </div>
           <div className="settings-form-control">
             <div className="settings-input-row">
-              <Input id="hub-directory" value={hubDir} onChange={(event) => setHubDir(event.target.value)} placeholder="~/.cc-switch/skills" />
+              <Input id="hub-directory" value={hubDir} onChange={(event) => setHubDir(event.target.value)} placeholder="~/.agents/skills" />
               <Button pending={updateHubDir.isPending} pendingLabel="保存中" disabled={!hubDir.trim()}><Save className="h-3.5 w-3.5" /> 保存</Button>
             </div>
-            <div className="settings-help">支持 `~/.cc-switch/skills`。不能与已启用的 Agent 目录相同。</div>
+            <div className="settings-help">默认使用 `~/.agents/skills`，也支持自定义路径。不能与已启用的 Agent 目录相同。</div>
           </div>
         </form>
       </section>}

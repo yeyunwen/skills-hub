@@ -345,7 +345,7 @@ export interface EnvironmentTrashResult {
 
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const MOCK_HOME = "/mock/home";
-const MOCK_HUB_DIR = `${MOCK_HOME}/.cc-switch/skills`;
+const MOCK_HUB_DIR = `${MOCK_HOME}/.agents/skills`;
 const mockPath = (path: string) => `${MOCK_HOME}/${path.replace(/^\//, "")}`;
 
 let mockHub: SkillInfo[] = [
@@ -357,7 +357,6 @@ let mockHub: SkillInfo[] = [
 ];
 
 const mockAgentConfigs: AgentConfig[] = [
-  { kind: "agents", label: "通用 Agent / Lark", skillsDir: mockPath(".agents/skills"), enabled: true },
   { kind: "claude", label: "Claude", skillsDir: mockPath(".claude/skills"), enabled: true },
   { kind: "codex", label: "Codex", skillsDir: mockPath(".codex/skills"), enabled: true },
   { kind: "continue", label: "Continue", skillsDir: mockPath(".continue/skills"), enabled: true },
@@ -504,7 +503,7 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
         })),
         sources: mockRemoteSources[environmentId] ?? [],
         config: {
-          hubDir: "~/.cc-switch/skills",
+          hubDir: "~/.agents/skills",
           configPath: "~/.config/skills-hub/config.json",
           backupsDir: "~/.config/skills-hub/backups",
         },

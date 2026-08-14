@@ -40,8 +40,8 @@ export function AppSidebar({
   });
   const selectedEnvironment = environments.find((item) => item.id === selectedEnvironmentId);
   const hubPath = selectedEnvironment?.kind === "local"
-    ? preferences.data?.hubDir ?? preferences.data?.hub_dir ?? "~/.cc-switch/skills"
-    : "~/.cc-switch/skills";
+    ? preferences.data?.hubDir ?? preferences.data?.hub_dir ?? "~/.agents/skills"
+    : "~/.agents/skills";
 
   const prefetchEnvironment = (environment: EnvironmentSummary) => {
     void queryClient.prefetchQuery({

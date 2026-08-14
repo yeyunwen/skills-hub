@@ -89,7 +89,7 @@ pub fn scan_skill_directory(root: impl AsRef<Path>) -> Result<Vec<SkillInfo>> {
     let mut skills = Vec::new();
 
     // WalkDir 不跟随 symlink，避免递归扫描时遇到环；但 Agent 目录里的 skill 经常就是
-    // `foo -> ~/.cc-switch/skills/foo` 这样的 symlink，所以这里单独识别根目录下一层 symlink。
+    // `foo -> ~/.agents/skills/foo` 这样的 symlink，所以这里单独识别根目录下一层 symlink。
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();

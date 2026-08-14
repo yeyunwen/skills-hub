@@ -10,8 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-pub const REMOTE_HUB_DIR: &str = "~/.cc-switch/skills";
-pub const REMOTE_HUB_SHELL_DIR: &str = "$HOME/.cc-switch/skills";
+pub const REMOTE_HUB_DIR: &str = "~/.agents/skills";
+pub const REMOTE_HUB_SHELL_DIR: &str = "$HOME/.agents/skills";
 
 /// 从本机 SSH 配置发现到的 Host alias。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1543,12 +1543,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn remote_hub_is_separate_from_agents_directory() {
-        let agents = AgentKind::parse("agents").unwrap();
-
-        assert_ne!(REMOTE_HUB_DIR, remote_agent_dir(&agents));
-        let shell = remote_link_shell(&[agents], SyncMethod::Symlink);
-        assert!(shell.contains(REMOTE_HUB_SHELL_DIR));
-        assert!(shell.contains("~/.agents/skills"));
+    fn remote_hub_uses_default_agents_directory() {
+        assert_eq!(REMOTE_HUB_DIR, "~/.agents/skills");
+        assert_eq!(REMOTE_HUB_SHELL_DIR, "$HOME/.agents/skills");
     }
 }

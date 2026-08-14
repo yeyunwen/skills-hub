@@ -307,7 +307,7 @@ pub fn default_config() -> HubConfig {
     let logs_dir = default_logs_dir();
     let agents = default_agents();
     HubConfig {
-        hub_dir: expand_path("~/.cc-switch/skills"),
+        hub_dir: expand_path("~/.agents/skills"),
         config_path,
         lock_path,
         backups_dir,
@@ -327,7 +327,6 @@ fn default_agents() -> BTreeMap<AgentKind, AgentConfig> {
         ("claude", "Claude", "~/.claude/skills"),
         ("cursor", "Cursor", "~/.cursor/skills"),
         ("openclaw", "OpenClaw", "~/.openclaw/skills"),
-        ("agents", "通用 Agent / Lark", "~/.agents/skills"),
         ("hermes", "Hermes", "~/.hermes/skills"),
         ("continue", "Continue", "~/.continue/skills"),
         ("windsurf", "Windsurf", "~/.codeium/windsurf/skills"),
@@ -438,6 +437,17 @@ pub fn init_hub(dry_run: bool) -> Result<HubConfig> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn default_hub_uses_agents_directory_without_duplicate_agent_target() {
+        let config = default_config();
+
+        assert_eq!(config.hub_dir, expand_path("~/.agents/skills"));
+        assert!(config
+            .agents
+            .values()
+            .all(|agent| agent.skills_dir != config.hub_dir));
+    }
 
     #[test]
     fn fills_new_agents_into_existing_config() {
