@@ -8,6 +8,14 @@
 
 正式版本会发布在 GitHub Releases。下载与你的平台匹配的压缩包，并使用同一版本附带的 `SHA256SUMS` 校验文件完整性。解压后把 `skh`（Windows 为 `skh.exe`）放入 `PATH`。
 
+### 下载桌面应用
+
+GitHub Releases 同时提供 macOS、Windows 和 Linux 桌面安装包。当前社区构建尚未配置商业代码签名，因此文件名会包含 `unsigned`；macOS Gatekeeper 和 Windows SmartScreen 可能会显示安全提醒。
+
+- macOS：下载与你的芯片匹配的 `.dmg`；
+- Windows：优先使用 `-setup.exe`，也可以使用 `.msi`；
+- Linux：可以选择 `.AppImage` 或 `.deb`。
+
 ### 从源码安装 CLI
 
 需要 Rust 1.96 或更高版本：
@@ -23,7 +31,7 @@ skh --version
 skh --help
 ```
 
-桌面安装包将在完成 macOS/Windows 签名后提供。在此之前可以按照下方开发说明从源码构建。
+所有自动构建的 CLI 和桌面制品都可以通过同一版本的 `SHA256SUMS` 与 GitHub attestation 验证来源。
 
 ## 目标
 
