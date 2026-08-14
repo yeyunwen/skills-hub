@@ -2,6 +2,29 @@
 
 `skills-hub` 是一个管理 AI Coding Agent Skills 的桌面工具和 CLI。它把 GitHub / GitLab / SSH Git / 本地目录里的 `SKILL.md` 扫描、安装到当前环境的统一技能库，再按需分发到 Codex、Claude、Cursor 或 OpenClaw。
 
+## 安装
+
+### 下载预编译 CLI
+
+正式版本会发布在 GitHub Releases。下载与你的平台匹配的压缩包，并使用同一版本附带的 `SHA256SUMS` 校验文件完整性。解压后把 `skh`（Windows 为 `skh.exe`）放入 `PATH`。
+
+### 从源码安装 CLI
+
+需要 Rust 1.96 或更高版本：
+
+```bash
+cargo install --git https://github.com/yeyunwen/skills-hub skh-cli
+```
+
+验证安装：
+
+```bash
+skh --version
+skh --help
+```
+
+桌面安装包将在完成 macOS/Windows 签名后提供。在此之前可以按照下方开发说明从源码构建。
+
 ## 目标
 
 - 每个环境拥有独立 Hub：默认是 `~/.agents/skills`
@@ -28,6 +51,14 @@ just test
 just check
 just build
 just run -- --help
+pnpm version:check
+```
+
+完整检查还需要 Node.js 24 和 pnpm 10.28：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm desktop:check
 ```
 
 ## CLI 示例

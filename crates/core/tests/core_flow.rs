@@ -9,7 +9,10 @@ fn parses_git_urls() {
 
     let github = parse_git_url("https://github.com/foo/bar.git");
     assert_eq!(github.kind, SourceKind::Github);
-    assert_eq!(default_source_id("https://github.com/foo/bar.git"), "foo-bar");
+    assert_eq!(
+        default_source_id("https://github.com/foo/bar.git"),
+        "foo-bar"
+    );
 }
 
 #[test]
@@ -87,7 +90,10 @@ fn takeover_and_remove_hub_skill_cleans_managed_agent() {
     ));
 
     let removed = remove_hub_skill("demo", true).unwrap();
-    assert_eq!(removed.skill.as_ref().map(|skill| skill.dir_name.as_str()), Some("demo"));
+    assert_eq!(
+        removed.skill.as_ref().map(|skill| skill.dir_name.as_str()),
+        Some("demo")
+    );
     assert!(!hub_skill.exists());
     assert!(!cursor_skill.exists());
     assert!(cursor_skill.symlink_metadata().is_err());
