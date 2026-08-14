@@ -296,7 +296,13 @@ pub fn remove_agent_skill(
         None
     } else {
         let timestamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
-        Some(config.backups_dir.join(&timestamp).join(agent.as_str()).join(&dir_name))
+        Some(
+            config
+                .backups_dir
+                .join(&timestamp)
+                .join(agent.as_str())
+                .join(&dir_name),
+        )
     };
 
     if !dry_run {
@@ -308,8 +314,9 @@ pub fn remove_agent_skill(
         } else {
             fs::remove_file(&path).or_else(|_| fs::remove_dir_all(&path))?;
         }
-        lock.managed_links
-            .retain(|record| !(record.agent == agent && record.skill_name == dir_name && record.link_path == path));
+        lock.managed_links.retain(|record| {
+            !(record.agent == agent && record.skill_name == dir_name && record.link_path == path)
+        });
         save_lock(&config, &lock)?;
     }
 

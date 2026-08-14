@@ -1,10 +1,15 @@
 [package]
 name = "skh-cli"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Command-line manager for distributing AI coding agent skills"
+keywords = ["ai", "cli", "developer-tools", "skills"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "skh"
@@ -17,4 +22,4 @@ console.workspace = true
 inquire.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-skills-hub-core = { path = "../core" }
+skills-hub-core = { version = "0.1.0", path = "../core" }

@@ -1,10 +1,15 @@
 [package]
 name = "skills-hub-core"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Core library for discovering and distributing AI coding agent skills"
+keywords = ["ai", "developer-tools", "skills"]
+categories = ["development-tools"]
 
 [dependencies]
 anyhow.workspace = true
