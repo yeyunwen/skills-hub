@@ -79,16 +79,22 @@ fn classify_host(host: Option<&str>) -> SourceKind {
     }
 }
 
-/// 从 URL 推导默认 source id，通常取仓库名。
+/// 从 URL 推导默认 source id。
+///
+/// Git 仓库优先取 `namespace-repo`，比如 `foo/bar.git` -> `foo-bar`，
+/// 这样比只用 repo 名更不容易撞名。
 pub fn default_source_id(input: &str) -> String {
     let parsed = parse_git_url(input);
     if let Some(repo_path) = parsed.repo_path {
-        return repo_path
-            .rsplit('/')
-            .next()
-            .unwrap_or("source")
-            .trim_end_matches(".git")
-            .to_string();
+        let mut parts = repo_path.split('/').filter(|part| !part.is_empty());
+        if let Some(first) = parts.next() {
+            let mut id = first.to_string();
+            for part in parts {
+                id.push('-');
+                id.push_str(part);
+            }
+            return id;
+        }
     }
     Path::new(input)
         .file_name()
@@ -176,6 +182,14 @@ mod tests {
     fn parses_github_https_url() {
         let parsed = parse_git_url("https://github.com/a/b.git");
         assert_eq!(parsed.kind, SourceKind::Github);
-        assert_eq!(default_source_id("https://github.com/a/b.git"), "b");
+        assert_eq!(default_source_id("https://github.com/a/b.git"), "a-b");
+    }
+
+    #[test]
+    fn default_source_id_keeps_namespace_for_gitlab() {
+        assert_eq!(
+            default_source_id("git@gitlab.example.com:team/subgroup/agent-skills.git"),
+            "team-subgroup-agent-skills"
+        );
     }
 }

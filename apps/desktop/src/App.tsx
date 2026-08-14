@@ -1,4 +1,4 @@
-import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -38,6 +38,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { AgentIcon, RemoteIcon, StatusDot } from "@/lib/brand";
 import { useToast } from "@/lib/toast";
+import skillHubLogo from "@/assets/skill-hub-logo.png";
 import {
   AGENTS,
   agentStatus,
@@ -164,7 +165,7 @@ function Sidebar({
   return (
     <aside className="app-sidebar">
       <div className="sidebar-brand">
-        <div className="brand-mark">□</div>
+        <img className="brand-mark" src={skillHubLogo} alt="" aria-hidden="true" />
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">skills-hub</div>
           <div className="truncate text-[11px] text-muted-foreground">AI Agent 技能库</div>
@@ -178,26 +179,34 @@ function Sidebar({
             <Plus className="h-3.5 w-3.5" />
           </button>
         </div>
-        <LayoutGroup id="environment-list">
-          <div className="space-y-0.5">
-            {environments.map((environment) => (
-              <EnvironmentNavItem
-                key={environment.id}
-                environment={environment}
-                selected={selectedEnvironmentId === environment.id}
-                onClick={() => onEnvironmentChange(environment.id)}
-                onPrefetch={() => prefetchEnvironment(environment)}
-              />
-            ))}
-          </div>
-        </LayoutGroup>
+        <div className="space-y-0.5">
+          {environments.map((environment) => (
+            <EnvironmentNavItem
+              key={environment.id}
+              environment={environment}
+              selected={selectedEnvironmentId === environment.id}
+              onClick={() => onEnvironmentChange(environment.id)}
+              onPrefetch={() => prefetchEnvironment(environment)}
+            />
+          ))}
+        </div>
       </div>
 
       <div className="sidebar-section sidebar-secondary-nav">
-        <button className={cn("sidebar-link", page === "sources" && "sidebar-link-active")} onClick={() => onPageChange("sources")}>
+        <button
+          className={cn("sidebar-link", page === "sources" && "sidebar-link-active")}
+          aria-current={page === "sources" ? "page" : undefined}
+          title="安装来源"
+          onClick={() => onPageChange("sources")}
+        >
           <GitBranch className="h-4 w-4" /> 安装来源
         </button>
-        <button className={cn("sidebar-link", page === "settings" && "sidebar-link-active")} onClick={() => onPageChange("settings")}>
+        <button
+          className={cn("sidebar-link", page === "settings" && "sidebar-link-active")}
+          aria-current={page === "settings" ? "page" : undefined}
+          title="设置"
+          onClick={() => onPageChange("settings")}
+        >
           <Settings className="h-4 w-4" /> 设置
         </button>
       </div>
@@ -237,11 +246,19 @@ function EnvironmentNavItem({
   });
   const connected = environment.kind === "local" || connection.data?.status === "connected";
   return (
-    <button className={cn("environment-nav-item", selected && "environment-nav-item-active")} onMouseEnter={onPrefetch} onFocus={onPrefetch} onClick={onClick}>
-      {selected && <motion.span layoutId="environment-selected" className="environment-selected-indicator" />}
+    <button
+      className={cn("environment-nav-item", selected && "environment-nav-item-active")}
+      aria-current={selected ? "page" : undefined}
+      aria-label={environment.name}
+      title={environment.name}
+      onMouseEnter={onPrefetch}
+      onFocus={onPrefetch}
+      onClick={onClick}
+    >
+      {selected && <span className="environment-selected-background" />}
       <span className="environment-nav-icon">{environment.kind === "local" ? <Laptop className="h-4 w-4" /> : <RemoteIcon size={16} />}</span>
-      <span className="min-w-0 flex-1 truncate text-left">{environment.name}</span>
-      <StatusDot tone={connection.isFetching ? "info" : connected ? "success" : "danger"} spinning={connection.isFetching} />
+      <span className="environment-nav-label">{environment.name}</span>
+      <span className="environment-nav-status"><StatusDot tone={connection.isFetching ? "info" : connected ? "success" : "danger"} spinning={connection.isFetching} /></span>
     </button>
   );
 }
@@ -250,19 +267,12 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   const queryClient = useQueryClient();
   const { showToast, updateToast } = useToast();
   const [query, setQuery] = useState("");
-  const [filterQuery, setFilterQuery] = useState("");
-  const [isSearchComposing, setIsSearchComposing] = useState(false);
   const [agentFilter, setAgentFilter] = useState<AgentKind | "all">("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const snapshot = useEnvironmentSnapshot(environment.id);
-  useEffect(() => {
-    if (isSearchComposing) return;
-    const timeoutId = window.setTimeout(() => setFilterQuery(query), 80);
-    return () => window.clearTimeout(timeoutId);
-  }, [isSearchComposing, query]);
   const rows = useMemo(() => {
     if (!snapshot.data) return [];
     return buildSkillRows({ hub: snapshot.data.hub, agents: snapshot.data.agents }, snapshot.data.statuses);
@@ -276,9 +286,9 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
     [snapshot.data],
   );
   const visibleRows = useMemo(() => {
-    const normalized = filterQuery.trim().toLowerCase();
+    const normalized = query.trim().toLowerCase();
     const result = rows.filter((row) => {
-      const matchesQuery = !normalized || `${row.displayName} ${row.description ?? ""}`.toLowerCase().includes(normalized);
+      const matchesQuery = !normalized || `${row.name} ${row.displayName} ${row.description ?? ""}`.toLowerCase().includes(normalized);
       const matchesAgent = agentFilter === "all" || row.agents.some((status) => status.agent === agentFilter);
       const matchesStatus =
         statusFilter === "all" ||
@@ -290,12 +300,61 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
       return matchesQuery && matchesAgent && matchesStatus;
     });
     return result;
-  }, [agentFilter, filterQuery, rows, statusFilter]);
-  const animateRows = !query.trim() && agentFilter === "all" && statusFilter === "all";
+  }, [agentFilter, query, rows, statusFilter]);
   const pageCount = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
   const currentPage = Math.min(pageIndex, pageCount - 1);
   const pageRows = visibleRows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
   const filtering = Boolean(query.trim()) || agentFilter !== "all" || statusFilter !== "all";
+
+  useEffect(() => {
+    if (!query.trim()) return;
+    const nameCounts = rows.reduce<Record<string, number>>((counts, row) => {
+      counts[row.name] = (counts[row.name] ?? 0) + 1;
+      return counts;
+    }, {});
+    const duplicateNames = Object.entries(nameCounts).filter(([, count]) => count > 1);
+    const sendDebugLog = (hypothesisId: string, message: string, data: Record<string, unknown>) => {
+      // #region agent log
+      fetch("http://127.0.0.1:7878/ingest/k7m2", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: "k7m2",
+          runId: "post-fix",
+          hypothesisId,
+          location: "apps/desktop/src/App.tsx:SkillsPage",
+          message,
+          data,
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+    };
+
+    sendDebugLog("H1", "skill row key uniqueness", {
+      totalRows: rows.length,
+      duplicateCount: duplicateNames.length,
+      duplicates: duplicateNames.slice(0, 20),
+    });
+    sendDebugLog("H3", "filtered rows before render", {
+      buildMarker: "search-key-debug-v2",
+      query,
+      visibleCount: visibleRows.length,
+      pageRows: pageRows.map((row) => ({ name: row.name, displayName: row.displayName, path: row.path })),
+    });
+
+    const timeoutId = window.setTimeout(() => {
+      sendDebugLog("H2", "rendered rows after filter", {
+        query,
+        expected: pageRows.map((row) => `${row.name}|${row.displayName}|${row.path}`),
+        rendered: Array.from(document.querySelectorAll(".skill-row")).map((element) => ({
+          title: element.querySelector(".skill-row-title")?.textContent ?? "",
+          description: element.querySelector(".skill-row-description")?.textContent ?? "",
+        })),
+      });
+    }, 100);
+    return () => window.clearTimeout(timeoutId);
+  }, [pageRows, query, rows, visibleRows.length]);
 
   useEffect(() => {
     setPageIndex(0);
@@ -385,10 +444,17 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
       title={environment.name}
       subtitle={environment.kind === "local" ? "本机统一管理的 AI Coding Skills。" : "通过 SSH 管理这台电脑自己的 Hub、Agent 和来源。"}
       environment={environment}
+      transitioning={snapshot.isPlaceholderData}
       actions={
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => void snapshot.refetch()} disabled={snapshot.isFetching}>
-            <RefreshCw className={cn("h-3.5 w-3.5", snapshot.isFetching && "animate-spin")} /> 刷新
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void snapshot.refetch()}
+            pending={snapshot.isFetching}
+            pendingLabel="刷新中"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> 刷新
           </Button>
           <Button variant="secondary" size="sm" onClick={() => setTransferOpen(true)}>
             <Cloud className="h-3.5 w-3.5" /> 环境工具
@@ -423,12 +489,7 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
             spellCheck={false}
             inputMode="search"
             enterKeyHint="search"
-            onInput={(event) => setQuery(event.currentTarget.value)}
-            onCompositionStart={() => setIsSearchComposing(true)}
-            onCompositionEnd={(event) => {
-              setIsSearchComposing(false);
-              setQuery(event.currentTarget.value);
-            }}
+            onChange={(event) => setQuery(event.currentTarget.value)}
             placeholder="搜索名称或描述…"
           />
           {query && <button className="search-clear" aria-label="清空搜索" onClick={() => setQuery("")}><X className="h-3.5 w-3.5" /></button>}
@@ -454,30 +515,12 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
           </div>
         </div>
         <div className="skill-list">
-          {animateRows ? <AnimatePresence initial={false}>
-            {pageRows.map((row) => (
-              <SkillRow
-                key={row.name}
-                row={row}
-                onOpen={() => setSelectedSkillName(row.name)}
-                onAgentAction={(agent, status) => handleAgentAction(row.name, agent, status)}
-                animate={animateRows}
-                pendingAgent={
-                  skillMutation.isPending && skillMutation.variables?.skillName === row.name
-                    ? skillMutation.variables.agent
-                    : takeoverMutation.isPending && takeoverMutation.variables?.skillName === row.name
-                      ? takeoverMutation.variables.agent
-                      : null
-                }
-              />
-          ))}
-          </AnimatePresence> : pageRows.map((row) => (
+          {pageRows.map((row) => (
             <SkillRow
               key={row.name}
               row={row}
               onOpen={() => setSelectedSkillName(row.name)}
               onAgentAction={(agent, status) => handleAgentAction(row.name, agent, status)}
-              animate={false}
               pendingAgent={
                 skillMutation.isPending && skillMutation.variables?.skillName === row.name
                   ? skillMutation.variables.agent
@@ -539,22 +582,14 @@ const SkillRow = memo(function SkillRow({
   onOpen,
   onAgentAction,
   pendingAgent,
-  animate,
 }: {
   row: SkillRowView;
   onOpen: () => void;
   onAgentAction: (agent: AgentKind, status: string) => void;
   pendingAgent?: AgentKind | null;
-  animate: boolean;
 }) {
   return (
-    <motion.div
-      layout={animate}
-      initial={animate ? { opacity: 0, y: 4 } : false}
-      animate={animate ? { opacity: 1, y: 0 } : undefined}
-      exit={animate ? { opacity: 0, height: 0 } : undefined}
-      className="skill-row"
-    >
+    <div className="skill-row">
       <button className="skill-row-main" onClick={onOpen}>
         <div className="min-w-0">
           <div className="skill-row-title">
@@ -585,9 +620,9 @@ const SkillRow = memo(function SkillRow({
       <button className="skill-row-more" aria-label={`打开 ${row.displayName} 详情`} onClick={onOpen}>
         <MoreHorizontal className="h-4 w-4" />
       </button>
-    </motion.div>
+    </div>
   );
-}, (previous, next) => previous.row === next.row && previous.pendingAgent === next.pendingAgent && previous.animate === next.animate);
+}, (previous, next) => previous.row === next.row && previous.pendingAgent === next.pendingAgent);
 
 function SkillDrawer({
   row,
@@ -609,12 +644,20 @@ function SkillDrawer({
   const skill = snapshot.hub.find((item) => (item.dirName ?? item.dir_name ?? item.name) === row.name);
   return (
     <>
-      <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="drawer-overlay" aria-label="关闭详情" onClick={onClose} />
+      <motion.button
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: reduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
+        className="drawer-overlay"
+        aria-label="关闭详情"
+        onClick={onClose}
+      />
       <motion.aside
-        initial={{ x: reduceMotion ? 0 : 480 }}
-        animate={{ x: 0 }}
-        exit={{ x: reduceMotion ? 0 : 480 }}
-        transition={{ duration: reduceMotion ? 0 : 0.2 }}
+        initial={{ opacity: reduceMotion ? 0 : 1, transform: reduceMotion ? "none" : "translateX(100%)" }}
+        animate={{ opacity: 1, transform: "translateX(0%)" }}
+        exit={{ opacity: reduceMotion ? 0 : 1, transform: reduceMotion ? "none" : "translateX(100%)" }}
+        transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: [0.32, 0.72, 0, 1] }}
         className="skill-drawer"
       >
         <div className="drawer-header">
@@ -662,7 +705,7 @@ function SkillDrawer({
           </DialogHeader>
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setTrashOpen(false)}>取消</Button>
-            <Button variant="destructive" disabled={trashing} onClick={onTrash}>{trashing && <Loader2 className="h-4 w-4 animate-spin" />} 移入回收站</Button>
+            <Button variant="destructive" pending={trashing} pendingLabel="正在移除" onClick={onTrash}>移入回收站</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -699,10 +742,13 @@ function TransferDialog({
     },
     onError: (error) => showToast({ tone: "error", title: "传输失败", description: getErrorMessage(error) }),
   });
-  const availableTargets = environments.filter((item) => item.id !== source.id);
+  const availableTargets = useMemo(
+    () => environments.filter((item) => item.id !== source.id),
+    [environments, source.id],
+  );
   useEffect(() => {
     if (open && !targetId && availableTargets[0]) setTargetId(availableTargets[0].id);
-    if (!open) setSelected([]);
+    if (!open) setSelected((current) => current.length ? [] : current);
   }, [availableTargets, open, targetId]);
   const items = compare.data?.items ?? [];
   return (
@@ -738,12 +784,18 @@ function TransferDialog({
           )}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => onOpenChange(false)}>取消</Button>
-            <Button variant="secondary" disabled={!selected.length || transfer.isPending || !targetId} onClick={() => transfer.mutate(false)}>
-              {transfer.isPending && <Loader2 className="h-4 w-4 animate-spin" />} 安全传输
+            <Button
+              variant="secondary"
+              disabled={!selected.length || !targetId}
+              pending={transfer.isPending && transfer.variables === false}
+              pendingLabel="传输中"
+              onClick={() => transfer.mutate(false)}
+            >
+              安全传输
             </Button>
             {items.some((item) => selected.includes(item.skillName ?? item.skill_name ?? "") && item.status === "different") && (
-              <Button disabled={transfer.isPending || !targetId} onClick={() => transfer.mutate(true)}>
-                {transfer.isPending && <Loader2 className="h-4 w-4 animate-spin" />} 覆盖并备份
+              <Button disabled={!targetId || transfer.isPending} pending={transfer.isPending && transfer.variables === true} pendingLabel="传输中" onClick={() => transfer.mutate(true)}>
+                覆盖并备份
               </Button>
             )}
           </div>
@@ -756,6 +808,7 @@ function TransferDialog({
 function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const reduceMotion = useReducedMotion();
   const snapshot = useEnvironmentSnapshot(environment.id);
   const [addOpen, setAddOpen] = useState(false);
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
@@ -781,14 +834,35 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
     },
     onError: (error) => showToast({ tone: "error", title: "来源移除失败", description: getErrorMessage(error) }),
   });
+  useEffect(() => {
+    setSelectedSource(null);
+  }, [environment.id]);
+  const sourceActions = (
+    <Button size="sm" disabled={!canManageSources || snapshot.isLoading} onClick={() => setAddOpen(true)}>
+      <Plus className="h-3.5 w-3.5" /> 添加来源
+    </Button>
+  );
+  if (snapshot.isLoading) {
+    return (
+      <PageShell title="安装来源" subtitle={`${environment.name} 的 Git、本地目录和 SSH Git 来源。`} environment={environment} actions={sourceActions}>
+        <PageLoading />
+      </PageShell>
+    );
+  }
+  if (snapshot.isError || !snapshot.data) {
+    return (
+      <PageShell title="安装来源" subtitle={`${environment.name} 的 Git、本地目录和 SSH Git 来源。`} environment={environment} actions={sourceActions}>
+        <PageError title="无法读取安装来源" message={getErrorMessage(snapshot.error)} onRetry={() => void snapshot.refetch()} />
+      </PageShell>
+    );
+  }
   return (
     <PageShell
       title="安装来源"
       subtitle={`${environment.name} 的 Git、本地目录和 SSH Git 来源。`}
       environment={environment}
-      actions={
-        <Button size="sm" disabled={!canManageSources || snapshot.isLoading} onClick={() => setAddOpen(true)}><Plus className="h-3.5 w-3.5" /> 添加来源</Button>
-      }
+      transitioning={snapshot.isPlaceholderData}
+      actions={sourceActions}
     >
       {environment.kind === "remote" && snapshot.data && !canManageSources && (
         <div className="capability-banner">
@@ -799,25 +873,76 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
           </div>
         </div>
       )}
-      <section className="workspace-list">
+      <section className="workspace-list source-workspace">
         <div className="workspace-list-header"><div><div className="section-title">来源</div><div className="section-caption">{sources.length} 个来源</div></div></div>
-        <div className="source-list">
-          {sources.map((source) => (
-            <div key={source.id} className={cn("source-row", selectedSource === source.id && "source-row-selected")}>
-              <SourceIcon kind={source.kind} />
-              <div className="min-w-0 flex-1"><div className="font-medium">{source.id}</div><div className="muted-path">{source.url}</div></div>
-              <Badge>{source.kind}</Badge>
-              <Button variant="secondary" size="sm" onClick={() => setSelectedSource(source.id)}>扫描</Button>
-              <button className="icon-button" aria-label={`移除来源 ${source.id}`} onClick={() => removeSource.mutate(source.id)}><Trash2 className="h-3.5 w-3.5" /></button>
-            </div>
-          ))}
-          {!sources.length && (
-            <EmptyState
-              title="还没有来源"
-              description={canManageSources ? "添加 GitHub、GitLab、SSH Git 或目标机器上的本地目录。" : "补齐 Git 和 Python3 后即可添加来源。"}
-            />
-          )}
-        </div>
+        <motion.div
+          className="source-workspace-body"
+          data-has-scan={Boolean(selectedSource)}
+        >
+          <div className="source-list">
+            <AnimatePresence initial={false} mode="popLayout">
+              {sources.map((source) => {
+                const removing = removeSource.isPending && removeSource.variables === source.id;
+                const selected = selectedSource === source.id;
+                return (
+                  <motion.div
+                    key={source.id}
+                    initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(4px)" }}
+                    animate={{ opacity: 1, transform: "translateY(0px)" }}
+                    exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-4px)" }}
+                    transition={{ duration: reduceMotion ? 0.1 : 0.16, ease: [0.23, 1, 0.32, 1] }}
+                    className={cn("source-row", selected && "source-row-selected")}
+                  >
+                    <span className="source-kind-icon"><SourceIcon kind={source.kind} /></span>
+                    <div className="source-copy">
+                      <div className="source-name" title={source.id}>{source.id}</div>
+                      <div className="muted-path" title={source.url}>{source.url}</div>
+                    </div>
+                    <div className="source-row-actions">
+                      <Badge>{source.kind}</Badge>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        aria-pressed={selected}
+                        onClick={() => setSelectedSource(selected ? null : source.id)}
+                      >
+                        {selected ? "关闭" : "扫描"}
+                      </Button>
+                      <button
+                        className="icon-button"
+                        aria-label={`移除来源 ${source.id}`}
+                        disabled={removeSource.isPending}
+                        onClick={() => removeSource.mutate(source.id)}
+                      >
+                        {removing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+            {!sources.length && (
+              <EmptyState
+                title="还没有来源"
+                description={canManageSources ? "添加 GitHub、GitLab、SSH Git 或目标机器上的本地目录。" : "补齐 Git 和 Python3 后即可添加来源。"}
+              />
+            )}
+          </div>
+          <AnimatePresence initial={false}>
+            {canManageSources && selectedSource && (
+              <motion.div
+                key={selectedSource}
+                initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(6px)" }}
+                animate={{ opacity: 1, transform: "translateY(0px)" }}
+                exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(6px)" }}
+                transition={{ duration: reduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
+                className="source-scan-pane"
+              >
+                <SourceScanPanel environmentId={environment.id} sourceId={selectedSource} onClose={() => setSelectedSource(null)} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
       </section>
       {canManageSources && (
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -827,7 +952,6 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
           </DialogContent>
         </Dialog>
       )}
-      {canManageSources && selectedSource && <SourceScanPanel environmentId={environment.id} sourceId={selectedSource} onClose={() => setSelectedSource(null)} />}
     </PageShell>
   );
 }
@@ -835,6 +959,7 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
 function SourceScanPanel({ environmentId, sourceId, onClose }: { environmentId: string; sourceId: string; onClose: () => void }) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const reduceMotion = useReducedMotion();
   const scan = useQuery({
     queryKey: ["source-scan", environmentId, sourceId],
     queryFn: () => api.scanEnvironmentSource({ environmentId, sourceRef: sourceId }),
@@ -852,12 +977,74 @@ function SourceScanPanel({ environmentId, sourceId, onClose }: { environmentId: 
     onError: (error) => showToast({ tone: "error", title: "Skill 安装失败", description: getErrorMessage(error) }),
   });
   const pendingSkills = scan.data?.skills.filter((skill) => !skill.installed) ?? [];
+  const scanState = scan.isLoading ? "loading" : scan.isError && !scan.data ? "error" : "ready";
   return (
-    <div className="inline-drawer">
-      <div className="flex items-center justify-between gap-3"><div><div className="section-title">来源扫描</div><div className="section-caption">{sourceId}</div></div><div className="flex items-center gap-2">{pendingSkills.length > 0 && <Button size="sm" disabled={install.isPending} onClick={() => install.mutate({ skills: [], all: true })}>{install.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />} 安装全部</Button>}<button className="icon-button" onClick={onClose}><X className="h-4 w-4" /></button></div></div>
-      {scan.isLoading && <PageLoading compact />}
-      {scan.isError && <PageError title="扫描失败" message={getErrorMessage(scan.error)} onRetry={() => void scan.refetch()} />}
-      {scan.data && <div className="source-scan-list">{scan.data.skills.map((skill) => <div key={skill.name} className="source-scan-row"><div className="min-w-0 flex-1"><div className="font-medium">{skill.name}</div><div className="text-xs text-muted-foreground">{skill.description || "暂无描述"}</div></div><Badge>{skill.installed ? "已纳管" : "待纳管"}</Badge>{!skill.installed && <Button variant="secondary" size="sm" disabled={install.isPending} onClick={() => install.mutate({ skills: [skill.name], all: false })}>安装</Button>}</div>)}</div>}
+    <div className="source-scan-panel">
+      <div className="source-scan-header">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="section-title">来源扫描</div>
+            {scan.isFetching && !scan.isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+          </div>
+          <div className="section-caption truncate" title={sourceId}>{sourceId}</div>
+        </div>
+        <div className="source-scan-actions">
+          {pendingSkills.length > 0 && (
+            <Button
+              size="sm"
+              pending={install.isPending && install.variables?.all}
+              pendingLabel="安装中"
+              disabled={install.isPending}
+              onClick={() => install.mutate({ skills: [], all: true })}
+            >
+              安装全部
+            </Button>
+          )}
+          <button className="icon-button" aria-label="关闭来源扫描" onClick={onClose}><X className="h-4 w-4" /></button>
+        </div>
+      </div>
+      <AnimatePresence initial={false} mode="wait">
+        <motion.div
+          key={scanState}
+          initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(3px)" }}
+          animate={{ opacity: 1, transform: "translateY(0px)" }}
+          exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-3px)" }}
+          transition={{ duration: reduceMotion ? 0.1 : 0.14, ease: [0.23, 1, 0.32, 1] }}
+          className="source-scan-content"
+        >
+          {scanState === "loading" && <PageLoading compact label="正在扫描来源…" />}
+          {scanState === "error" && <PageError title="扫描失败" message={getErrorMessage(scan.error)} onRetry={() => void scan.refetch()} />}
+          {scan.data && (
+            <div className="source-scan-list">
+              {scan.data.skills.map((skill) => {
+                const pending = install.isPending && !install.variables?.all && install.variables?.skills.includes(skill.name);
+                return (
+                  <div key={skill.name} className="source-scan-row">
+                    <div className="source-scan-copy">
+                      <div className="source-name" title={skill.name}>{skill.name}</div>
+                      <div className="source-scan-description">{skill.description || "暂无描述"}</div>
+                    </div>
+                    <Badge>{skill.installed ? "已纳管" : "待纳管"}</Badge>
+                    {!skill.installed && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        pending={pending}
+                        pendingLabel="安装中"
+                        disabled={install.isPending}
+                        onClick={() => install.mutate({ skills: [skill.name], all: false })}
+                      >
+                        安装
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+              {!scan.data.skills.length && <EmptyState title="没有可安装的 Skill" description="该来源当前没有识别到 Skill。" />}
+            </div>
+          )}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }
@@ -871,7 +1058,7 @@ function SourceForm({ loading, onSubmit }: { loading: boolean; onSubmit: (input:
       <Input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="GitHub、GitLab、SSH Git 或本地路径" autoFocus />
       <Input value={id} onChange={(event) => setId(event.target.value)} placeholder="来源名称，可选" />
       <Input value={branch} onChange={(event) => setBranch(event.target.value)} placeholder="分支，可选" />
-      <div className="flex justify-end"><Button disabled={!url.trim() || loading}>{loading && <Loader2 className="h-4 w-4 animate-spin" />} 添加来源</Button></div>
+      <div className="flex justify-end"><Button disabled={!url.trim()} pending={loading} pendingLabel="添加中">添加来源</Button></div>
     </form>
   );
 }
@@ -893,12 +1080,31 @@ function SettingsPage({ environment, theme, onThemeChange }: { environment: Envi
         { label: "默认同步", value: syncMethodLabel(preferences.data?.defaultSyncMethod ?? preferences.data?.default_sync_method ?? "auto") },
       ]
     : [];
+  if (snapshot.isLoading) {
+    return (
+      <PageShell title="设置" subtitle="应用偏好和当前环境配置。" environment={environment}>
+        <PageLoading />
+      </PageShell>
+    );
+  }
+  if (snapshot.isError || !snapshot.data) {
+    return (
+      <PageShell title="设置" subtitle="应用偏好和当前环境配置。" environment={environment}>
+        <PageError title="无法读取当前环境配置" message={getErrorMessage(snapshot.error)} onRetry={() => void snapshot.refetch()} />
+      </PageShell>
+    );
+  }
   return (
-    <PageShell title="设置" subtitle="应用偏好和当前环境配置。" environment={environment}>
+    <PageShell
+      title="设置"
+      subtitle="应用偏好和当前环境配置。"
+      environment={environment}
+      transitioning={snapshot.isPlaceholderData}
+    >
       <section className="settings-section">
         <div className="settings-section-header"><div><div className="section-title">应用</div><div className="section-caption">影响所有环境的显示和默认策略</div></div></div>
         <div className="settings-row"><div><div className="font-medium">主题</div><div className="text-xs text-muted-foreground">跟随系统或手动选择</div></div><div className="segmented-control">{(["system", "light", "dark"] as Theme[]).map((item) => <button key={item} className={cn("segmented-item", theme === item && "segmented-item-active")} onClick={() => onThemeChange(item)}>{item === "system" ? "系统" : item === "light" ? <><Sun className="h-3.5 w-3.5" />浅色</> : <><Moon className="h-3.5 w-3.5" />深色</>}</button>)}</div></div>
-        <div className="settings-row"><div><div className="font-medium">默认同步方式</div><div className="text-xs text-muted-foreground">本机和 SSH 环境 Agent 的默认同步方式</div></div><div className="segmented-control">{(["auto", "symlink", "copy"] as SyncMethod[]).map((item) => <button key={item} className={cn("segmented-item", (preferences.data?.defaultSyncMethod ?? preferences.data?.default_sync_method ?? "auto") === item && "segmented-item-active")} onClick={() => updatePreferences.mutate(item)}>{item === "auto" ? "自动" : item === "symlink" ? "链接" : "复制"}</button>)}</div></div>
+        <div className="settings-row"><div><div className="font-medium">默认同步方式</div><div className="text-xs text-muted-foreground">本机和 SSH 环境 Agent 的默认同步方式</div></div><div className="segmented-control" aria-busy={updatePreferences.isPending}>{(["auto", "symlink", "copy"] as SyncMethod[]).map((item) => <button key={item} disabled={updatePreferences.isPending} className={cn("segmented-item", (preferences.data?.defaultSyncMethod ?? preferences.data?.default_sync_method ?? "auto") === item && "segmented-item-active")} onClick={() => updatePreferences.mutate(item)}>{item === "auto" ? "自动" : item === "symlink" ? "链接" : "复制"}</button>)}</div></div>
       </section>
       <section className="settings-section">
         <div className="settings-section-header"><div><div className="section-title">当前环境</div><div className="section-caption">{environment.name}</div></div></div>
@@ -938,14 +1144,28 @@ function AddEnvironmentDialog({ open, onOpenChange, onAdded }: { open: boolean; 
           <Input value={host} onChange={(event) => setHost(event.target.value)} placeholder="SSH Host / Alias" autoFocus />
           <Input value={user} onChange={(event) => setUser(event.target.value)} placeholder="用户，可选" />
           <Input value={port} onChange={(event) => setPort(event.target.value)} placeholder="端口，可选" />
-          <div className="flex justify-end"><Button disabled={!host.trim() || add.isPending}>{add.isPending && <Loader2 className="h-4 w-4 animate-spin" />} 添加环境</Button></div>
+          <div className="flex justify-end"><Button disabled={!host.trim()} pending={add.isPending} pendingLabel="添加中">添加环境</Button></div>
         </form>
       </DialogContent>
     </Dialog>
   );
 }
 
-function PageShell({ title, subtitle, environment, actions, children }: { title: string; subtitle: string; environment: EnvironmentSummary; actions?: ReactNode; children: ReactNode }) {
+function PageShell({
+  title,
+  subtitle,
+  environment,
+  actions,
+  children,
+  transitioning = false,
+}: {
+  title: string;
+  subtitle: string;
+  environment: EnvironmentSummary;
+  actions?: ReactNode;
+  children: ReactNode;
+  transitioning?: boolean;
+}) {
   const connection = useQuery({
     queryKey: ["environment-connection", environment.id],
     queryFn: () => api.checkEnvironmentConnection(environment.id),
@@ -957,7 +1177,13 @@ function PageShell({ title, subtitle, environment, actions, children }: { title:
   });
   const connected = environment.kind === "local" || connection.data?.status === "connected";
   return (
-    <div className="page-shell">
+    <div
+      key={`${environment.id}:${title}`}
+      className="page-shell"
+      data-transitioning={transitioning || undefined}
+      aria-busy={transitioning}
+    >
+      {transitioning && <div className="environment-loading-line" aria-hidden="true" />}
       <header className="page-header">
         <div className="min-w-0">
           <div className="environment-breadcrumb"><span>{environment.kind === "local" ? "本机环境" : "SSH 环境"}</span><ChevronRight className="h-3.5 w-3.5" /><span className="truncate">{environment.name}</span><StatusDot tone={connection.isFetching ? "info" : connected ? "success" : "danger"} spinning={connection.isFetching} /></div>
@@ -966,13 +1192,15 @@ function PageShell({ title, subtitle, environment, actions, children }: { title:
         </div>
         {actions && <div className="page-actions">{actions}</div>}
       </header>
-      {children}
+      <div className="page-content" inert={transitioning ? true : undefined}>
+        {children}
+      </div>
     </div>
   );
 }
 
 function StatItem({ label, value, tone = "default" }: { label: string; value: number; tone?: "default" | "success" | "muted" | "danger" }) {
-  return <div className="stat-item"><div className="kicker">{label}</div><div className={cn("stat-value", tone === "success" && "text-emerald-600", tone === "danger" && "text-red-600")}>{value}</div></div>;
+  return <div className="stat-item"><div className="kicker">{label}</div><div className={cn("stat-value", tone === "success" && "stat-value-success", tone === "danger" && "stat-value-danger", tone === "muted" && "stat-value-muted")}>{value}</div></div>;
 }
 
 function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
@@ -983,12 +1211,12 @@ function EmptyState({ title, description }: { title: string; description: string
   return <div className="empty-state"><div className="empty-state-icon"><Database className="h-4 w-4" /></div><div className="font-medium">{title}</div><div className="mt-1 text-sm text-muted-foreground">{description}</div></div>;
 }
 
-function PageLoading({ compact = false }: { compact?: boolean }) {
-  return <div className={cn("loading-state", compact && "loading-state-compact")}><Loader2 className="h-4 w-4 animate-spin" /><span>正在读取环境状态…</span></div>;
+function PageLoading({ compact = false, label = "正在读取环境状态…" }: { compact?: boolean; label?: string }) {
+  return <div className={cn("loading-state", compact && "loading-state-compact")} role="status"><Loader2 className="h-4 w-4 animate-spin" /><span>{label}</span></div>;
 }
 
 function PageError({ title, message, onRetry }: { title: string; message: string; onRetry: () => void }) {
-  return <div className="error-state"><CircleAlert className="h-4 w-4 shrink-0" /><div className="min-w-0 flex-1"><div className="font-medium">{title}</div><div className="mt-1 text-sm">{message}</div></div><Button variant="secondary" size="sm" onClick={onRetry}>重试</Button></div>;
+  return <div className="error-state" role="alert"><CircleAlert className="h-4 w-4 shrink-0" /><div className="min-w-0 flex-1"><div className="font-medium">{title}</div><div className="mt-1 break-words text-sm">{message}</div></div><Button variant="secondary" size="sm" onClick={onRetry}>重试</Button></div>;
 }
 
 function compareStatusLabel(status: string) {

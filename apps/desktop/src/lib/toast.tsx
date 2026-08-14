@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { CheckCircle2, Info, Loader2, TriangleAlert, X } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { cn } from "@/lib/utils";
 
 export type ToastTone = "info" | "success" | "error" | "loading";
@@ -70,36 +71,58 @@ export function useToast() {
 
 function ToastViewport({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: string) => void }) {
   return (
-    <div className="fixed right-4 top-4 z-[100] flex w-[360px] flex-col gap-2">
-      {toasts.map((toast) => (
-        <ToastCard key={toast.id} toast={toast} onDismiss={() => onDismiss(toast.id)} />
-      ))}
+    <div className="toast-viewport" aria-live="polite" aria-relevant="additions removals">
+      <AnimatePresence initial={false} mode="popLayout">
+        {toasts.map((toast) => (
+          <ToastCard key={toast.id} toast={toast} onDismiss={() => onDismiss(toast.id)} />
+        ))}
+      </AnimatePresence>
     </div>
   );
 }
 
 function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: () => void }) {
+  const reduceMotion = useReducedMotion();
   const Icon = toast.tone === "success" ? CheckCircle2 : toast.tone === "error" ? TriangleAlert : toast.tone === "loading" ? Loader2 : Info;
   return (
-    <div className="rounded-lg border border-border bg-card p-3 text-sm shadow-2xl shadow-black/10">
+    <motion.div
+      layout={reduceMotion ? false : "position"}
+      initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-8px)" }}
+      animate={{ opacity: 1, transform: "translateY(0px)" }}
+      exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-8px)" }}
+      transition={{ duration: reduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
+      className="toast-card"
+      role={toast.tone === "error" ? "alert" : "status"}
+    >
       <div className="flex items-start gap-3">
-        <Icon
-          className={cn(
-            "mt-0.5 h-4 w-4 shrink-0",
-            toast.tone === "success" && "text-[hsl(var(--accent))]",
-            toast.tone === "error" && "text-red-600",
-            toast.tone === "info" && "text-blue-600",
-            toast.tone === "loading" && "animate-spin text-muted-foreground",
-          )}
-        />
+        <AnimatePresence initial={false} mode="wait">
+          <motion.span
+            key={toast.tone}
+            initial={{ opacity: 0, transform: reduceMotion ? "none" : "scale(0.96)" }}
+            animate={{ opacity: 1, transform: "scale(1)" }}
+            exit={{ opacity: 0, transform: reduceMotion ? "none" : "scale(0.96)" }}
+            transition={{ duration: 0.12, ease: [0.23, 1, 0.32, 1] }}
+            className="toast-icon"
+          >
+            <Icon
+              className={cn(
+                "h-4 w-4",
+                toast.tone === "success" && "text-[hsl(var(--success))]",
+                toast.tone === "error" && "text-[hsl(var(--destructive))]",
+                toast.tone === "info" && "text-[hsl(var(--info))]",
+                toast.tone === "loading" && "animate-spin text-muted-foreground",
+              )}
+            />
+          </motion.span>
+        </AnimatePresence>
         <div className="min-w-0 flex-1">
           <div className="font-medium text-foreground">{toast.title}</div>
-          {toast.description && <div className="mt-1 text-xs leading-5 text-muted-foreground">{toast.description}</div>}
+          {toast.description && <div className="toast-description">{toast.description}</div>}
         </div>
-        <button className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={onDismiss}>
+        <button className="toast-close" aria-label="关闭通知" onClick={onDismiss}>
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 }

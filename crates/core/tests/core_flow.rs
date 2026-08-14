@@ -9,7 +9,7 @@ fn parses_git_urls() {
 
     let github = parse_git_url("https://github.com/foo/bar.git");
     assert_eq!(github.kind, SourceKind::Github);
-    assert_eq!(default_source_id("https://github.com/foo/bar.git"), "bar");
+    assert_eq!(default_source_id("https://github.com/foo/bar.git"), "foo-bar");
 }
 
 #[test]

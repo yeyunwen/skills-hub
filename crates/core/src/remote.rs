@@ -1444,8 +1444,12 @@ root = os.path.expanduser({dir:?})
 markers = [os.path.expanduser(item) for item in {markers:?}]
 available = any(os.path.exists(item) for item in markers)
 items = []
+seen = set()
 def append_skill(current):
     real_root = os.path.realpath(current)
+    if real_root in seen:
+        return
+    seen.add(real_root)
     path = os.path.join(real_root, 'SKILL.md')
     if not os.path.isfile(path):
         return
