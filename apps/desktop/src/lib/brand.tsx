@@ -1,10 +1,22 @@
-import { ClaudeCode, Cloudflare, Codex, Cursor, Github, OpenClaw } from "@lobehub/icons";
-import { Cloud, GitBranch } from "lucide-react";
+import { ClaudeCode, Cloudflare, Codex, Cursor, Github, HermesAgent, OpenClaw, Qoder, Trae, Windsurf } from "@lobehub/icons";
+import { Bot, Cloud, GitBranch } from "lucide-react";
 import gitlabIcon from "@/assets/icons/gitlab.svg";
 import type { AgentKind } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type LobeIconComponent = React.ComponentType<{ size: number; className?: string; style?: React.CSSProperties }>;
+type LobeIcon = LobeIconComponent & { Avatar?: LobeIconComponent; Color?: LobeIconComponent };
+
+const AGENT_ICONS: Record<string, LobeIcon> = {
+  claude: ClaudeCode,
+  codex: Codex,
+  cursor: Cursor,
+  hermes: HermesAgent,
+  openclaw: OpenClaw,
+  qoder: Qoder,
+  trae: Trae,
+  windsurf: Windsurf,
+};
 
 function LobeMark({ Icon, size = 16, className }: { Icon: LobeIconComponent; size?: number; className?: string }) {
   return <Icon size={size} className={cn("shrink-0", className)} />;
@@ -15,8 +27,8 @@ function LobeAvatar({ Icon, size = 16, className }: { Icon: { Avatar?: LobeIconC
   return Avatar ? <Avatar size={size} className={cn("shrink-0", className)} /> : null;
 }
 
-function LocalImageIcon({ src, alt, className }: { src: string; alt: string; className?: string }) {
-  return <img src={src} alt={alt} className={cn("h-[18px] w-[18px] shrink-0 rounded-[3px] object-contain", className)} />;
+function LocalImageIcon({ src, alt, size = 18, className }: { src: string; alt: string; size?: number; className?: string }) {
+  return <img src={src} alt={alt} width={size} height={size} className={cn("shrink-0 rounded-[3px] object-contain", className)} />;
 }
 
 export function SourceIcon({ kind, className }: { kind: string; className?: string }) {
@@ -28,10 +40,9 @@ export function SourceIcon({ kind, className }: { kind: string; className?: stri
 }
 
 export function AgentIcon({ agent, className, size = 14 }: { agent: AgentKind; className?: string; size?: number }) {
-  if (agent === "codex") return <LobeMark Icon={Codex.Color ?? Codex.Avatar ?? Codex} size={size} className={className} />;
-  if (agent === "claude") return <LobeMark Icon={ClaudeCode.Color ?? ClaudeCode.Avatar ?? ClaudeCode} size={size} className={className} />;
-  if (agent === "cursor") return <LobeAvatar Icon={Cursor} size={size} className={className} />;
-  return <LobeMark Icon={OpenClaw.Color ?? OpenClaw.Avatar ?? OpenClaw} size={size} className={className} />;
+  const icon = AGENT_ICONS[agent];
+  if (icon) return <LobeMark Icon={icon.Color ?? icon.Avatar ?? icon} size={size} className={className} />;
+  return <Bot size={size} className={cn("shrink-0", className)} />;
 }
 
 export function RemoteIcon({ className, size = 16 }: { className?: string; size?: number }) {

@@ -1,7 +1,7 @@
 use crate::{
     copy_dir, create_relative_symlink, is_symlink_to, load_config, load_lock, path_exists,
-    safe_skill_dir_name, save_lock, scan_skill_directory, AgentKind, ManagedLinkRecord,
-    MigrationRecord, SkillInfo,
+    paths_resolve_same, safe_skill_dir_name, save_lock, scan_skill_root, AgentKind,
+    ManagedLinkRecord, MigrationRecord, SkillInfo,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -133,7 +133,7 @@ pub fn link_skill(
         return Ok(agents
             .iter()
             .map(|agent| LinkTargetResult {
-                agent: *agent,
+                agent: agent.clone(),
                 status: LinkStatus::Missing,
                 path: config.agents[agent].skills_dir.join(skill_name),
                 target_path: config.hub_dir.join(skill_name),
@@ -149,7 +149,7 @@ pub fn link_skill(
         let target_path = hub_skill.path.clone();
         let dest_path = agent_config.skills_dir.join(&hub_skill.dir_name);
         let result = sync_one_local_agent(
-            *agent,
+            agent.clone(),
             &hub_skill.dir_name,
             &target_path,
             &dest_path,
@@ -188,16 +188,17 @@ pub fn unlink_skill(
 
     for agent in agents {
         let dest_path = config.agents[agent].skills_dir.join(&dir_name);
-        let managed = lock.managed_links.iter().any(|record| {
-            record.agent == *agent
-                && record.skill_name == dir_name
-                && record.link_path == dest_path
-                && record.target_path == target_path
-        });
+        let managed = is_managed_link(
+            &lock.managed_links,
+            agent,
+            &dir_name,
+            &dest_path,
+            &target_path,
+        );
 
         if !path_exists(&dest_path) {
             results.push(LinkTargetResult {
-                agent: *agent,
+                agent: agent.clone(),
                 status: LinkStatus::Skipped,
                 path: dest_path,
                 target_path: target_path.clone(),
@@ -210,7 +211,7 @@ pub fn unlink_skill(
         if !managed && !is_symlink_to(&dest_path, &target_path)? {
             // 安全保护：取消同步只删除 symlink 或 lock 里明确记录的 copy 副本，绝不删除未知真实目录。
             results.push(LinkTargetResult {
-                agent: *agent,
+                agent: agent.clone(),
                 status: LinkStatus::Conflict,
                 path: dest_path,
                 target_path: target_path.clone(),
@@ -223,13 +224,13 @@ pub fn unlink_skill(
         if !dry_run {
             fs::remove_file(&dest_path).or_else(|_| fs::remove_dir_all(&dest_path))?;
             lock.managed_links.retain(|record| {
-                !(record.agent == *agent
+                !(&record.agent == agent
                     && record.skill_name == dir_name
                     && record.link_path == dest_path)
             });
         }
         results.push(LinkTargetResult {
-            agent: *agent,
+            agent: agent.clone(),
             status: if dry_run {
                 LinkStatus::DryRun
             } else {
@@ -256,7 +257,7 @@ pub fn sync_agents(
     method: SyncMethod,
 ) -> Result<Vec<LinkTargetResult>> {
     let config = load_config()?;
-    let skills = scan_skill_directory(&config.hub_dir)?;
+    let skills = scan_skill_root(&config.hub_dir)?;
     let mut results = Vec::new();
     for skill in skills {
         results.extend(link_skill(&skill.dir_name, agents, force, dry_run, method)?);
@@ -374,7 +375,7 @@ pub fn takeover_agent_skill(
             upsert_link(
                 &mut lock.managed_links,
                 ManagedLinkRecord {
-                    agent,
+                    agent: agent.clone(),
                     skill_name: hub_skill.dir_name.clone(),
                     link_path: dest_path.clone(),
                     target_path: hub_skill.path.clone(),
@@ -409,6 +410,13 @@ fn sync_one_local_agent(
     method: SyncMethod,
     lock_records: &mut Vec<ManagedLinkRecord>,
 ) -> Result<LinkTargetResult> {
+    if paths_resolve_same(source_path, dest_path)? {
+        anyhow::bail!(
+            "refuse to sync skill onto itself: {}",
+            source_path.display()
+        );
+    }
+
     if path_exists(dest_path) && is_symlink_to(dest_path, source_path)? {
         return Ok(LinkTargetResult {
             agent,
@@ -421,13 +429,11 @@ fn sync_one_local_agent(
     }
 
     if path_exists(dest_path) {
-        let managed = lock_records
-            .iter()
-            .any(|record| record.agent == agent && record.skill_name == skill_name);
+        let managed = is_managed_link(lock_records, &agent, skill_name, dest_path, source_path);
         if !managed && !force {
             // 保护用户数据：sync 不覆盖未知真实目录，除非用户显式 force。
             return Ok(LinkTargetResult {
-                agent,
+                agent: agent.clone(),
                 status: LinkStatus::Conflict,
                 path: dest_path.to_path_buf(),
                 target_path: source_path.to_path_buf(),
@@ -450,7 +456,7 @@ fn sync_one_local_agent(
         upsert_link(
             lock_records,
             ManagedLinkRecord {
-                agent,
+                agent: agent.clone(),
                 skill_name: skill_name.to_string(),
                 link_path: dest_path.to_path_buf(),
                 target_path: source_path.to_path_buf(),
@@ -503,7 +509,7 @@ pub fn migrate_from_agent(
     let config = load_config()?;
     let mut lock = load_lock(&config)?;
     let agent_config = &config.agents[&agent];
-    let skills = scan_skill_directory(&agent_config.skills_dir)?;
+    let skills = scan_skill_root(&agent_config.skills_dir)?;
     let timestamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
     let mut records = Vec::new();
 
@@ -522,7 +528,7 @@ pub fn migrate_from_agent(
             .join(agent.as_str())
             .join(&skill.dir_name);
         let record = MigrationRecord {
-            agent,
+            agent: agent.clone(),
             skill_name: skill_name.clone(),
             original_path: skill.path.clone(),
             hub_path: hub_path.clone(),
@@ -542,7 +548,7 @@ pub fn migrate_from_agent(
             upsert_link(
                 &mut lock.managed_links,
                 ManagedLinkRecord {
-                    agent,
+                    agent: agent.clone(),
                     skill_name,
                     link_path: skill.path,
                     target_path: hub_path,
@@ -562,12 +568,12 @@ pub fn migrate_from_agent(
 /// 扫描 hub 中的 skill。
 pub fn scan_hub() -> Result<Vec<SkillInfo>> {
     let config = load_config()?;
-    scan_skill_directory(&config.hub_dir)
+    scan_skill_root(&config.hub_dir)
 }
 
 fn find_hub_skill(skill_name: &str) -> Result<Option<SkillInfo>> {
     let config = load_config()?;
-    let skills = scan_skill_directory(&config.hub_dir)?;
+    let skills = scan_skill_root(&config.hub_dir)?;
     Ok(skills
         .into_iter()
         .find(|skill| skill.dir_name == skill_name || skill.name == skill_name))
@@ -576,6 +582,21 @@ fn find_hub_skill(skill_name: &str) -> Result<Option<SkillInfo>> {
 fn upsert_link(records: &mut Vec<ManagedLinkRecord>, record: ManagedLinkRecord) {
     records.retain(|item| !(item.agent == record.agent && item.skill_name == record.skill_name));
     records.push(record);
+}
+
+fn is_managed_link(
+    records: &[ManagedLinkRecord],
+    agent: &AgentKind,
+    skill_name: &str,
+    link_path: &Path,
+    target_path: &Path,
+) -> bool {
+    records.iter().any(|record| {
+        &record.agent == agent
+            && record.skill_name == skill_name
+            && record.link_path == link_path
+            && record.target_path == target_path
+    })
 }
 
 /// skill 在某个 Agent 下的状态。
@@ -622,19 +643,20 @@ pub struct SkillStatus {
 pub fn list_status() -> Result<Vec<SkillStatus>> {
     let config = load_config()?;
     let lock = load_lock(&config)?;
-    let hub_skills = scan_skill_directory(&config.hub_dir)?;
+    let hub_skills = scan_skill_root(&config.hub_dir)?;
     let mut result = Vec::new();
 
     for skill in hub_skills {
         let mut agents = Vec::new();
         for (agent, agent_config) in &config.agents {
             let path = agent_config.skills_dir.join(&skill.dir_name);
-            let managed_copy = lock.managed_links.iter().any(|record| {
-                record.agent == *agent
-                    && record.skill_name == skill.dir_name
-                    && record.link_path == path
-                    && record.target_path == skill.path
-            });
+            let managed_copy = is_managed_link(
+                &lock.managed_links,
+                agent,
+                &skill.dir_name,
+                &path,
+                &skill.path,
+            );
             let status = if !path_exists(&path) {
                 SkillAgentStatusKind::Missing
             } else if is_symlink_to(&path, &skill.path)? {
@@ -647,7 +669,7 @@ pub fn list_status() -> Result<Vec<SkillStatus>> {
                 SkillAgentStatusKind::Conflict
             };
             agents.push(SkillAgentStatus {
-                agent: *agent,
+                agent: agent.clone(),
                 target_path: matches!(
                     status,
                     SkillAgentStatusKind::Linked | SkillAgentStatusKind::Copied
@@ -754,7 +776,12 @@ pub fn remove_hub_skill(skill_name: &str, force: bool) -> Result<RemoveHubSkillR
             info.path.display()
         );
     }
-    let agents = config.agents.keys().copied().collect::<Vec<_>>();
+    let agents = config
+        .agents
+        .values()
+        .filter(|agent| agent.enabled)
+        .map(|agent| agent.kind.clone())
+        .collect::<Vec<_>>();
     let agent_results = unlink_skill(&info.dir_name, &agents, false)?;
     if info.path.exists() || info.path.symlink_metadata().is_ok() {
         if info.is_symlink {
@@ -819,13 +846,16 @@ pub struct AgentScanResult {
 /// 扫描 hub 和 Codex/Claude/Cursor/OpenClaw 的 skill 数量与内容。
 pub fn scan_all() -> Result<ScanAllResult> {
     let config = load_config()?;
-    let hub = scan_skill_directory(&config.hub_dir)?;
+    let hub = scan_skill_root(&config.hub_dir)?;
     let mut agents = Vec::new();
     for (agent, agent_config) in &config.agents {
+        if !agent_config.enabled {
+            continue;
+        }
         agents.push(AgentScanResult {
-            agent: *agent,
+            agent: agent.clone(),
             skills_dir: agent_config.skills_dir.clone(),
-            skills: scan_skill_directory(&agent_config.skills_dir)?,
+            skills: scan_skill_root(&agent_config.skills_dir)?,
         });
     }
     Ok(ScanAllResult { hub, agents })

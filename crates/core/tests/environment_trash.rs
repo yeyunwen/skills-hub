@@ -18,7 +18,7 @@ fn local_trash_moves_skill_and_unlinks_managed_agent() {
 
     let linked = link_skill(
         "trash-demo",
-        &[AgentKind::Cursor],
+        &[AgentKind::cursor()],
         false,
         false,
         SyncMethod::Auto,
@@ -31,7 +31,7 @@ fn local_trash_moves_skill_and_unlinks_managed_agent() {
 
     let result = trash_environment_skill("local", "trash-demo", false).unwrap();
     let trash_path = PathBuf::from(result.trash_path);
-    let cursor_path = config.agents[&AgentKind::Cursor]
+    let cursor_path = config.agents[&AgentKind::cursor()]
         .skills_dir
         .join("trash-demo");
 

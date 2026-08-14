@@ -1,6 +1,6 @@
 use crate::{
-    copy_dir, list_remotes, load_config, remote_scan_hub, safe_skill_dir_name,
-    scan_skill_directory, unlink_skill, EnvironmentKind::Local, RemoteHost,
+    copy_dir, list_remotes, load_config, remote_scan_hub, safe_skill_dir_name, scan_skill_root,
+    unlink_skill, EnvironmentKind::Local, RemoteHost, REMOTE_HUB_DIR, REMOTE_HUB_SHELL_DIR,
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -287,7 +287,7 @@ pub fn trash_environment_skill(
     let trash_path = match environment.kind {
         Local => {
             let config = load_config()?;
-            let info = scan_skill_directory(&config.hub_dir)?
+            let info = scan_skill_root(&config.hub_dir)?
                 .into_iter()
                 .find(|skill| skill.dir_name == dir_name || skill.name == skill_name)
                 .ok_or_else(|| anyhow!("skill not found in environment: {dir_name}"))?;
@@ -308,7 +308,12 @@ pub fn trash_environment_skill(
                 .join(&timestamp)
                 .join(&dir_name);
             if !dry_run {
-                let agents = config.agents.keys().copied().collect::<Vec<_>>();
+                let agents = config
+                    .agents
+                    .values()
+                    .filter(|agent| agent.enabled)
+                    .map(|agent| agent.kind.clone())
+                    .collect::<Vec<_>>();
                 unlink_skill(&dir_name, &agents, false)?;
                 if let Some(parent) = trash.parent() {
                     fs::create_dir_all(parent)?;
@@ -330,7 +335,7 @@ pub fn trash_environment_skill(
             if !dry_run {
                 let script = format!(
                     r#"set -eu
-target="$HOME/.agents/skills/{dir_name}"
+target="{REMOTE_HUB_SHELL_DIR}/{dir_name}"
 trash="$HOME/.config/skills-hub/backups/trash/{timestamp}/{dir_name}"
 if [ ! -e "$target" ] && [ ! -L "$target" ]; then
   echo "skill does not exist: $target" >&2
@@ -370,7 +375,7 @@ fn environment_hub_entries(
     match environment.kind {
         Local => {
             let config = load_config()?;
-            scan_skill_directory(&config.hub_dir)?
+            scan_skill_root(&config.hub_dir)?
                 .into_iter()
                 .map(|skill| {
                     let source = skill.symlink_target.unwrap_or(skill.path);
@@ -484,7 +489,7 @@ fn prepare_environment_target(
             Ok(Some(backup.display().to_string()))
         }
         EnvironmentKind::Remote => {
-            let target = format!("$HOME/.agents/skills/{skill_name}");
+            let target = format!("{REMOTE_HUB_SHELL_DIR}/{skill_name}");
             let backup =
                 format!("$HOME/.config/skills-hub/backups/transfers/{timestamp}/{skill_name}");
             let script = format!(
@@ -507,13 +512,13 @@ fn write_environment_skill(
             copy_dir(staged, config.hub_dir.join(skill_name), false)
         }
         EnvironmentKind::Remote => {
-            run_environment_ssh(environment, "mkdir -p \"$HOME/.agents/skills\"")?;
+            run_environment_ssh(environment, &format!("mkdir -p \"{REMOTE_HUB_SHELL_DIR}\""))?;
             let mut command = Command::new("rsync");
             command.arg("-az");
             add_rsync_port(&mut command, environment);
             command.arg(format!("{}/", staged.display()));
             command.arg(format!(
-                "{}:~/.agents/skills/{skill_name}/",
+                "{}:{REMOTE_HUB_DIR}/{skill_name}/",
                 environment_remote_spec(environment)?
             ));
             run_checked(command, "upload remote skill")

@@ -89,7 +89,7 @@ pub fn scan_skill_directory(root: impl AsRef<Path>) -> Result<Vec<SkillInfo>> {
     let mut skills = Vec::new();
 
     // WalkDir 不跟随 symlink，避免递归扫描时遇到环；但 Agent 目录里的 skill 经常就是
-    // `foo -> ~/.agents/skills/foo` 这样的 symlink，所以这里单独识别根目录下一层 symlink。
+    // `foo -> ~/.cc-switch/skills/foo` 这样的 symlink，所以这里单独识别根目录下一层 symlink。
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
@@ -130,6 +130,34 @@ pub fn scan_skill_directory(root: impl AsRef<Path>) -> Result<Vec<SkillInfo>> {
     Ok(skills)
 }
 
+/// 只扫描根目录的直接子目录。
+///
+/// Hub 和 Agent 目录使用这个入口，避免把 `references/` 等技能包内部的
+/// `SKILL.md` 展开成可独立分发的技能。Git source 仍使用递归扫描。
+pub fn scan_skill_root(root: impl AsRef<Path>) -> Result<Vec<SkillInfo>> {
+    let root = root.as_ref();
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    if let Some(info) = read_skill_info(root)? {
+        return Ok(vec![info]);
+    }
+    let mut skills = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        if let Some(info) = read_skill_info(&path)? {
+            skills.push(info);
+        }
+    }
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(skills)
+}
+
 /// 校验 hub 中的目录名，避免路径穿越或隐藏目录。
 pub fn safe_skill_dir_name(name: &str) -> Result<String> {
     let value = name.trim();
@@ -153,5 +181,21 @@ mod tests {
         let meta = parse_skill_frontmatter("---\nname: demo\ndescription: hello\n---\nbody");
         assert_eq!(meta.name.as_deref(), Some("demo"));
         assert_eq!(meta.description.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn shallow_scan_does_not_promote_nested_reference_skills() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("skills");
+        let parent = root.join("devops");
+        let nested = parent.join("references/opscli");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(parent.join("SKILL.md"), "---\nname: devops\n---\n").unwrap();
+        fs::write(nested.join("SKILL.md"), "---\nname: opscli\n---\n").unwrap();
+
+        let skills = scan_skill_root(&root).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "devops");
     }
 }

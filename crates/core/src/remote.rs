@@ -10,6 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+pub const REMOTE_HUB_DIR: &str = "~/.cc-switch/skills";
+pub const REMOTE_HUB_SHELL_DIR: &str = "$HOME/.cc-switch/skills";
+
 /// 从本机 SSH 配置发现到的 Host alias。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredSshHost {
@@ -316,7 +319,7 @@ pub fn remote_sync_plan(
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
     let remote_spec = remote_spec(&remote);
-    let remote_hub_dir = "~/.agents/skills".to_string();
+    let remote_hub_dir = REMOTE_HUB_DIR.to_string();
     let mut commands = Vec::new();
 
     // 跨机器只能 copy/rsync；真正的 symlink/copy 发生在远端 hub -> 远端 agent 这一步。
@@ -389,12 +392,12 @@ fn run_remote_shell(remote: &RemoteHost, script: &str) -> Result<Output> {
 fn remote_link_shell(agents: &[AgentKind], sync_method: SyncMethod) -> String {
     let agent_dirs = agents
         .iter()
-        .map(|agent| format!("{}:{}", agent.as_str(), remote_agent_dir(*agent)))
+        .map(|agent| format!("{}:{}", agent.as_str(), remote_agent_dir(agent)))
         .collect::<Vec<_>>()
         .join(" ");
     format!(
         r#"set -eu
-hub="$HOME/.agents/skills"
+hub="{}"
 method="{}"
 mkdir -p "$hub"
 for pair in {}; do
@@ -424,6 +427,7 @@ for pair in {}; do
     fi
   done
 done"#,
+        REMOTE_HUB_SHELL_DIR,
         sync_method.as_str(),
         agent_dirs
     )
@@ -612,7 +616,7 @@ pub fn remote_environment_snapshot(
         .get(name)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
-    let (_, hub) = run_remote_skill_scan_at(&remote, "~/.agents/skills", &["~/.agents/skills"])?;
+    let (_, hub) = run_remote_skill_scan_at(&remote, REMOTE_HUB_DIR, &[REMOTE_HUB_DIR])?;
     let scan = remote_scan(name, agents)?;
     Ok(RemoteEnvironmentSnapshot {
         remote,
@@ -629,7 +633,7 @@ pub fn remote_scan_hub(name: &str) -> Result<(RemoteHost, Vec<RemoteSkillInfo>)>
         .get(name)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
-    let (_, hub) = run_remote_skill_scan_at(&remote, "~/.agents/skills", &["~/.agents/skills"])?;
+    let (_, hub) = run_remote_skill_scan_at(&remote, REMOTE_HUB_DIR, &[REMOTE_HUB_DIR])?;
     Ok((remote, hub))
 }
 
@@ -729,8 +733,9 @@ fn run_remote_source_helper<T: DeserializeOwned>(
         .into_iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    let helper = REMOTE_SOURCE_HELPER.replace("__REMOTE_HUB_DIR__", REMOTE_HUB_DIR);
     let script = format!(
-        "import json\npayload = json.loads(bytes.fromhex({encoded:?}).decode('utf-8'))\n{REMOTE_SOURCE_HELPER}"
+        "import json\npayload = json.loads(bytes.fromhex({encoded:?}).decode('utf-8'))\n{helper}"
     );
     let output = run_remote_shell(remote, &format!("python3 - <<'PY'\n{script}\nPY"))?;
     serde_json::from_slice(&output.stdout).map_err(Into::into)
@@ -746,7 +751,7 @@ import subprocess
 
 config_path = os.path.expanduser('~/.config/skills-hub/config.json')
 cache_root = os.path.expanduser('~/.cache/skills-hub/sources')
-hub_root = os.path.expanduser('~/.agents/skills')
+hub_root = os.path.expanduser('__REMOTE_HUB_DIR__')
 
 def load_config():
     if not os.path.isfile(config_path):
@@ -1002,12 +1007,12 @@ pub fn remote_scan(name: &str, agents: &[AgentKind]) -> Result<RemoteScanResult>
         .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
     let mut results = Vec::new();
     for agent in agents {
-        let dir = remote_agent_dir(*agent);
-        let (available, skills) = run_remote_skill_scan(&remote, *agent)?;
+        let dir = remote_agent_dir(agent);
+        let (available, skills) = run_remote_skill_scan(&remote, agent)?;
         results.push(RemoteAgentScanResult {
-            agent: *agent,
+            agent: agent.clone(),
             available,
-            skills_dir: dir.to_string(),
+            skills_dir: dir,
             skills,
         });
     }
@@ -1022,7 +1027,7 @@ pub fn remote_scan(name: &str, agents: &[AgentKind]) -> Result<RemoteScanResult>
 /// 新 GUI 应通过环境快照和显式跨环境对比接口使用，不把本机 Hub 默认视为远端真源。
 pub fn remote_list(name: &str, agents: &[AgentKind]) -> Result<RemoteListResult> {
     let config = load_config()?;
-    let hub_skills = crate::scan_skill_directory(&config.hub_dir)?;
+    let hub_skills = crate::scan_skill_root(&config.hub_dir)?;
     let hub_names: std::collections::BTreeSet<String> =
         hub_skills.into_iter().map(|skill| skill.dir_name).collect();
     let scan = remote_scan(name, agents)?;
@@ -1038,14 +1043,14 @@ pub fn remote_list(name: &str, agents: &[AgentKind]) -> Result<RemoteListResult>
             if let Some(path) = remote_names.get(hub_name) {
                 statuses.push(RemoteSkillStatus {
                     skill_name: hub_name.clone(),
-                    agent: agent_scan.agent,
+                    agent: agent_scan.agent.clone(),
                     status: RemoteSkillStatusKind::Synced,
                     remote_path: Some(path.clone()),
                 });
             } else {
                 statuses.push(RemoteSkillStatus {
                     skill_name: hub_name.clone(),
-                    agent: agent_scan.agent,
+                    agent: agent_scan.agent.clone(),
                     status: RemoteSkillStatusKind::Missing,
                     remote_path: None,
                 });
@@ -1055,7 +1060,7 @@ pub fn remote_list(name: &str, agents: &[AgentKind]) -> Result<RemoteListResult>
             if !hub_names.contains(&remote_name) {
                 statuses.push(RemoteSkillStatus {
                     skill_name: remote_name,
-                    agent: agent_scan.agent,
+                    agent: agent_scan.agent.clone(),
                     status: RemoteSkillStatusKind::RemoteOnly,
                     remote_path: Some(path),
                 });
@@ -1085,7 +1090,7 @@ pub fn remote_import_skill(
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
     let dir_name = safe_skill_dir_name(skill_name)?;
-    let scan = remote_scan(name, &[agent])?;
+    let scan = remote_scan(name, std::slice::from_ref(&agent))?;
     let skill = scan
         .agents
         .iter()
@@ -1146,7 +1151,7 @@ pub fn remote_sync_skill(
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
     let dir_name = safe_skill_dir_name(skill_name)?;
-    let hub_skill = crate::scan_skill_directory(&config.hub_dir)?
+    let hub_skill = crate::scan_skill_root(&config.hub_dir)?
         .into_iter()
         .find(|skill| skill.dir_name == dir_name || skill.name == skill_name)
         .ok_or_else(|| anyhow::anyhow!("skill not found in hub: {skill_name}"))?;
@@ -1175,11 +1180,11 @@ pub fn remote_link_hub_skill(
         .find(|skill| skill.dir_name == dir_name || skill.name == skill_name)
         .ok_or_else(|| anyhow::anyhow!("skill not found in remote hub: {skill_name}"))?;
     let remote_hub_path = hub_skill.symlink_target.unwrap_or(hub_skill.path);
-    let remote_agent_path = format!("{}/{}", remote_agent_dir(agent), hub_skill.dir_name);
+    let remote_agent_path = format!("{}/{}", remote_agent_dir(&agent), hub_skill.dir_name);
     if dry_run {
         return Ok(RemoteSkillSyncResult {
             remote,
-            agent,
+            agent: agent.clone(),
             skill_name: hub_skill.dir_name,
             source_path: PathBuf::from(&remote_hub_path),
             remote_hub_path,
@@ -1191,7 +1196,7 @@ pub fn remote_link_hub_skill(
     let output = run_remote_shell(
         &remote,
         &remote_single_skill_link_shell(
-            agent,
+            agent.clone(),
             &hub_skill.dir_name,
             &remote_hub_path,
             &remote_agent_path,
@@ -1235,7 +1240,7 @@ pub fn remote_sync_local_agent_skill(
         .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
     let dir_name = safe_skill_dir_name(skill_name)?;
     let source_dir = &config.agents[&source_agent].skills_dir;
-    let skill = crate::scan_skill_directory(source_dir)?
+    let skill = crate::scan_skill_root(source_dir)?
         .into_iter()
         .find(|skill| skill.dir_name == dir_name || skill.name == skill_name)
         .ok_or_else(|| {
@@ -1256,8 +1261,8 @@ fn remote_sync_skill_from_path(
         .symlink_target
         .clone()
         .unwrap_or_else(|| skill.path.clone());
-    let remote_hub_path = format!("~/.agents/skills/{}", skill.dir_name);
-    let remote_agent_path = format!("{}/{}", remote_agent_dir(agent), skill.dir_name);
+    let remote_hub_path = format!("{REMOTE_HUB_DIR}/{}", skill.dir_name);
+    let remote_agent_path = format!("{}/{}", remote_agent_dir(&agent), skill.dir_name);
 
     if dry_run {
         return Ok(RemoteSkillSyncResult {
@@ -1300,7 +1305,7 @@ mkdir -p "$hub_skill""#
     let output = run_remote_shell(
         &remote,
         &remote_single_skill_link_shell(
-            agent,
+            agent.clone(),
             &skill.dir_name,
             &remote_hub_path,
             &remote_agent_path,
@@ -1342,7 +1347,7 @@ pub fn remote_remove_skill(
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("remote not found: {name}"))?;
     let dir_name = safe_skill_dir_name(skill_name)?;
-    let remote_dir = remote_agent_dir(agent);
+    let remote_dir = remote_agent_dir(&agent);
     let remote_path = format!("{remote_dir}/{dir_name}");
     let backup_path = format!(
         "~/.agents/skills-hub-backups/$(date +%Y%m%d-%H%M%S)/{}/{dir_name}",
@@ -1399,21 +1404,29 @@ fi"#,
     })
 }
 
-fn remote_agent_dir(agent: AgentKind) -> &'static str {
-    match agent {
-        AgentKind::Codex => "~/.codex/skills",
-        AgentKind::Claude => "~/.claude/skills",
-        AgentKind::Cursor => "~/.cursor/skills",
-        AgentKind::OpenClaw => "~/.openclaw/skills",
+fn remote_agent_dir(agent: &AgentKind) -> String {
+    match agent.as_str() {
+        "codex" => "~/.codex/skills".into(),
+        "claude" => "~/.claude/skills".into(),
+        "cursor" => "~/.cursor/skills".into(),
+        "openclaw" => "~/.openclaw/skills".into(),
+        "agents" => "~/.agents/skills".into(),
+        "hermes" => "~/.hermes/skills".into(),
+        "continue" => "~/.continue/skills".into(),
+        "windsurf" => "~/.codeium/windsurf/skills".into(),
+        "trae" => "~/.trae/skills".into(),
+        "qoder" => "~/.qoder/skills".into(),
+        "zode" => "~/.zode/skills".into(),
+        id => format!("~/.{id}/skills"),
     }
 }
 
-fn remote_agent_markers(agent: AgentKind) -> Vec<&'static str> {
-    match agent {
-        AgentKind::Codex => vec!["~/.codex", "~/.codex/config.toml"],
-        AgentKind::Claude => vec!["~/.claude", "~/.claude.json"],
-        AgentKind::Cursor => vec!["~/.cursor"],
-        AgentKind::OpenClaw => vec!["~/.openclaw"],
+fn remote_agent_markers(agent: &AgentKind) -> Vec<String> {
+    match agent.as_str() {
+        "codex" => vec!["~/.codex".into(), "~/.codex/config.toml".into()],
+        "claude" => vec!["~/.claude".into(), "~/.claude.json".into()],
+        "cursor" => vec!["~/.cursor".into()],
+        _ => vec![remote_agent_dir(agent)],
     }
 }
 
@@ -1425,11 +1438,12 @@ struct RemoteSkillScanPayload {
 
 fn run_remote_skill_scan(
     remote: &RemoteHost,
-    agent: AgentKind,
+    agent: &AgentKind,
 ) -> Result<(bool, Vec<RemoteSkillInfo>)> {
     let dir = remote_agent_dir(agent);
     let markers = remote_agent_markers(agent);
-    run_remote_skill_scan_at(remote, dir, &markers)
+    let marker_refs = markers.iter().map(String::as_str).collect::<Vec<_>>();
+    run_remote_skill_scan_at(remote, &dir, &marker_refs)
 }
 
 fn run_remote_skill_scan_at(
@@ -1522,4 +1536,19 @@ print(json.dumps({{'available': available, 'skills': items}}, ensure_ascii=False
     }
     let payload: RemoteSkillScanPayload = serde_json::from_slice(&output.stdout)?;
     Ok((payload.available, payload.skills))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_hub_is_separate_from_agents_directory() {
+        let agents = AgentKind::parse("agents").unwrap();
+
+        assert_ne!(REMOTE_HUB_DIR, remote_agent_dir(&agents));
+        let shell = remote_link_shell(&[agents], SyncMethod::Symlink);
+        assert!(shell.contains(REMOTE_HUB_SHELL_DIR));
+        assert!(shell.contains("~/.agents/skills"));
+    }
 }

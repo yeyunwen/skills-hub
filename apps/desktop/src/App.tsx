@@ -1,23 +1,24 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ChevronRight,
   CircleAlert,
+  ListFilter,
   ChevronLeft,
   Cloud,
-  Database,
   ExternalLink,
   FolderOpen,
   GitBranch,
-  Laptop,
   Loader2,
   Moon,
-  MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
-  Settings,
+  Save,
   Sun,
   Trash2,
   X,
@@ -25,6 +26,7 @@ import {
 import {
   api,
   type AgentKind,
+  type AgentConfig,
   type HubConfig,
   type EnvironmentSnapshot,
   type EnvironmentSummary,
@@ -32,26 +34,35 @@ import {
   type SyncMethod,
 } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import { AppSidebar, type Page } from "@/components/app-sidebar";
+import { EmptyState, PageError, PageLoading, PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { AgentIcon, RemoteIcon, StatusDot } from "@/lib/brand";
+import { AgentIcon } from "@/lib/brand";
 import { useToast } from "@/lib/toast";
-import skillHubLogo from "@/assets/skill-hub-logo.png";
+import { useEnvironmentSnapshot } from "@/hooks/use-environment-snapshot";
 import {
-  AGENTS,
   agentStatus,
   buildSkillRows,
   buildWorkspaceOverview,
   type SkillRowView,
 } from "@/lib/view-model";
 
-type Page = "skills" | "sources" | "settings";
 type Theme = "system" | "light" | "dark";
 type StatusFilter = "all" | "synced" | "missing" | "conflict";
 type AgentStatusValue = EnvironmentSnapshot["statuses"][number]["agents"][number]["status"];
 const PAGE_SIZE = 50;
+const WINDOW_DRAG_HEIGHT = 40;
+const INTERACTIVE_SELECTOR = "button, input, select, textarea, a, [role='button'], [role='combobox'], [data-no-window-drag]";
+
+function handleWindowDrag(event: ReactMouseEvent<HTMLDivElement>) {
+  if (!isTauri() || event.button !== 0 || event.clientY > WINDOW_DRAG_HEIGHT) return;
+  if ((event.target as HTMLElement).closest(INTERACTIVE_SELECTOR)) return;
+  void getCurrentWindow().startDragging();
+}
 
 function updateSnapshotAgentStatus(
   snapshot: EnvironmentSnapshot | undefined,
@@ -72,12 +83,9 @@ function updateSnapshotAgentStatus(
   };
 }
 
-const agentLabels: Record<AgentKind, string> = {
-  codex: "Codex",
-  claude: "Claude",
-  cursor: "Cursor",
-  openclaw: "OpenClaw",
-};
+function configuredAgentLabel(agent: AgentKind, config?: HubConfig) {
+  return config?.agents?.[agent]?.label ?? agent;
+}
 
 const statusLabels: Record<string, string> = {
   linked: "已同步",
@@ -116,8 +124,8 @@ function App() {
   };
 
   return (
-    <div className="app-frame">
-      <Sidebar
+    <div className="app-frame" onMouseDownCapture={handleWindowDrag}>
+      <AppSidebar
         environments={environments.data ?? []}
         selectedEnvironmentId={selectedEnvironment?.id ?? environmentId}
         page={page}
@@ -138,131 +146,6 @@ function App() {
   );
 }
 
-function Sidebar({
-  environments,
-  selectedEnvironmentId,
-  page,
-  onEnvironmentChange,
-  onPageChange,
-  onEnvironmentAdded,
-}: {
-  environments: EnvironmentSummary[];
-  selectedEnvironmentId: string;
-  page: Page;
-  onEnvironmentChange: (id: string) => void;
-  onPageChange: (page: Page) => void;
-  onEnvironmentAdded: (environment: EnvironmentSummary) => void;
-}) {
-  const [addOpen, setAddOpen] = useState(false);
-  const queryClient = useQueryClient();
-  const prefetchEnvironment = (environment: EnvironmentSummary) => {
-    void queryClient.prefetchQuery({
-      queryKey: ["environment-snapshot", environment.id],
-      queryFn: () => api.getEnvironmentSnapshot(environment.id),
-      staleTime: environment.kind === "local" ? 10_000 : 20_000,
-    });
-  };
-  return (
-    <aside className="app-sidebar">
-      <div className="sidebar-brand">
-        <img className="brand-mark" src={skillHubLogo} alt="" aria-hidden="true" />
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold">skills-hub</div>
-          <div className="truncate text-[11px] text-muted-foreground">AI Agent 技能库</div>
-        </div>
-      </div>
-
-      <div className="sidebar-section">
-        <div className="sidebar-section-header">
-          <span>环境</span>
-          <button className="icon-button" aria-label="添加 SSH 环境" onClick={() => setAddOpen(true)}>
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        <div className="space-y-0.5">
-          {environments.map((environment) => (
-            <EnvironmentNavItem
-              key={environment.id}
-              environment={environment}
-              selected={selectedEnvironmentId === environment.id}
-              onClick={() => onEnvironmentChange(environment.id)}
-              onPrefetch={() => prefetchEnvironment(environment)}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className="sidebar-section sidebar-secondary-nav">
-        <button
-          className={cn("sidebar-link", page === "sources" && "sidebar-link-active")}
-          aria-current={page === "sources" ? "page" : undefined}
-          title="安装来源"
-          onClick={() => onPageChange("sources")}
-        >
-          <GitBranch className="h-4 w-4" /> 安装来源
-        </button>
-        <button
-          className={cn("sidebar-link", page === "settings" && "sidebar-link-active")}
-          aria-current={page === "settings" ? "page" : undefined}
-          title="设置"
-          onClick={() => onPageChange("settings")}
-        >
-          <Settings className="h-4 w-4" /> 设置
-        </button>
-      </div>
-
-      <div className="sidebar-footer">
-        <div className="sidebar-footer-label">当前环境</div>
-        <div className="truncate text-xs font-medium">{environments.find((item) => item.id === selectedEnvironmentId)?.name ?? "本机"}</div>
-        <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-          {selectedEnvironmentId === "local" ? "~/.agents/skills" : "SSH 环境独立技能库"}
-        </div>
-      </div>
-      <AddEnvironmentDialog open={addOpen} onOpenChange={setAddOpen} onAdded={onEnvironmentAdded} />
-    </aside>
-  );
-}
-
-function EnvironmentNavItem({
-  environment,
-  selected,
-  onClick,
-  onPrefetch,
-}: {
-  environment: EnvironmentSummary;
-  selected: boolean;
-  onClick: () => void;
-  onPrefetch: () => void;
-}) {
-  const connection = useQuery({
-    queryKey: ["environment-connection", environment.id],
-    queryFn: () => api.checkEnvironmentConnection(environment.id),
-    enabled: environment.kind === "remote",
-    retry: false,
-    staleTime: 15_000,
-    gcTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
-    refetchInterval: environment.kind === "remote" ? 30_000 : false,
-  });
-  const connected = environment.kind === "local" || connection.data?.status === "connected";
-  return (
-    <button
-      className={cn("environment-nav-item", selected && "environment-nav-item-active")}
-      aria-current={selected ? "page" : undefined}
-      aria-label={environment.name}
-      title={environment.name}
-      onMouseEnter={onPrefetch}
-      onFocus={onPrefetch}
-      onClick={onClick}
-    >
-      {selected && <span className="environment-selected-background" />}
-      <span className="environment-nav-icon">{environment.kind === "local" ? <Laptop className="h-4 w-4" /> : <RemoteIcon size={16} />}</span>
-      <span className="environment-nav-label">{environment.name}</span>
-      <span className="environment-nav-status"><StatusDot tone={connection.isFetching ? "info" : connected ? "success" : "danger"} spinning={connection.isFetching} /></span>
-    </button>
-  );
-}
-
 function SkillsPage({ environment, environments }: { environment: EnvironmentSummary; environments: EnvironmentSummary[] }) {
   const queryClient = useQueryClient();
   const { showToast, updateToast } = useToast();
@@ -273,6 +156,11 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   const [transferOpen, setTransferOpen] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const snapshot = useEnvironmentSnapshot(environment.id);
+  const agents = useMemo(() => snapshot.data?.agents.map((item) => item.agent) ?? [], [snapshot.data?.agents]);
+  const agentLabels = useMemo(
+    () => Object.fromEntries(agents.map((agent) => [agent, configuredAgentLabel(agent, snapshot.data?.config)])),
+    [agents, snapshot.data?.config],
+  );
   const rows = useMemo(() => {
     if (!snapshot.data) return [];
     return buildSkillRows({ hub: snapshot.data.hub, agents: snapshot.data.agents }, snapshot.data.statuses);
@@ -305,56 +193,6 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   const currentPage = Math.min(pageIndex, pageCount - 1);
   const pageRows = visibleRows.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
   const filtering = Boolean(query.trim()) || agentFilter !== "all" || statusFilter !== "all";
-
-  useEffect(() => {
-    if (!query.trim()) return;
-    const nameCounts = rows.reduce<Record<string, number>>((counts, row) => {
-      counts[row.name] = (counts[row.name] ?? 0) + 1;
-      return counts;
-    }, {});
-    const duplicateNames = Object.entries(nameCounts).filter(([, count]) => count > 1);
-    const sendDebugLog = (hypothesisId: string, message: string, data: Record<string, unknown>) => {
-      // #region agent log
-      fetch("http://127.0.0.1:7878/ingest/k7m2", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: "k7m2",
-          runId: "post-fix",
-          hypothesisId,
-          location: "apps/desktop/src/App.tsx:SkillsPage",
-          message,
-          data,
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-    };
-
-    sendDebugLog("H1", "skill row key uniqueness", {
-      totalRows: rows.length,
-      duplicateCount: duplicateNames.length,
-      duplicates: duplicateNames.slice(0, 20),
-    });
-    sendDebugLog("H3", "filtered rows before render", {
-      buildMarker: "search-key-debug-v2",
-      query,
-      visibleCount: visibleRows.length,
-      pageRows: pageRows.map((row) => ({ name: row.name, displayName: row.displayName, path: row.path })),
-    });
-
-    const timeoutId = window.setTimeout(() => {
-      sendDebugLog("H2", "rendered rows after filter", {
-        query,
-        expected: pageRows.map((row) => `${row.name}|${row.displayName}|${row.path}`),
-        rendered: Array.from(document.querySelectorAll(".skill-row")).map((element) => ({
-          title: element.querySelector(".skill-row-title")?.textContent ?? "",
-          description: element.querySelector(".skill-row-description")?.textContent ?? "",
-        })),
-      });
-    }, 100);
-    return () => window.clearTimeout(timeoutId);
-  }, [pageRows, query, rows, visibleRows.length]);
 
   useEffect(() => {
     setPageIndex(0);
@@ -433,16 +271,19 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
     onError: (error, skillName, toastId) => updateToast(toastId ?? "", { tone: "error", title: "移入回收站失败", description: `${skillName} · ${getErrorMessage(error)}` }),
   });
 
-  if (snapshot.isLoading) return <PageLoading />;
+  const pageSubtitle = environment.kind === "local" ? "统一管理的 AI Coding Skills。" : "通过 SSH 管理这台电脑自己的 Hub、Agent 和来源。";
+  if (snapshot.isLoading) {
+    return <PageShell title="技能" subtitle={pageSubtitle} environment={environment}><PageLoading /></PageShell>;
+  }
   if (snapshot.isError || !snapshot.data) {
-    return <PageError title={`${environment.name} 暂时不可用`} message={getErrorMessage(snapshot.error)} onRetry={() => void snapshot.refetch()} />;
+    return <PageShell title="技能" subtitle={pageSubtitle} environment={environment}><PageError title={`${environment.name} 暂时不可用`} message={getErrorMessage(snapshot.error)} onRetry={() => void snapshot.refetch()} /></PageShell>;
   }
 
   const capabilitiesReady = environment.kind === "local" || (snapshot.data.capabilities.ssh && snapshot.data.capabilities.python3);
   return (
     <PageShell
-      title={environment.name}
-      subtitle={environment.kind === "local" ? "本机统一管理的 AI Coding Skills。" : "通过 SSH 管理这台电脑自己的 Hub、Agent 和来源。"}
+      title="技能"
+      subtitle={pageSubtitle}
       environment={environment}
       transitioning={snapshot.isPlaceholderData}
       actions={
@@ -450,11 +291,12 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
           <Button
             variant="secondary"
             size="sm"
+            className="refresh-button"
             onClick={() => void snapshot.refetch()}
-            pending={snapshot.isFetching}
-            pendingLabel="刷新中"
+            disabled={snapshot.isFetching}
+            aria-busy={snapshot.isFetching || undefined}
           >
-            <RefreshCw className="h-3.5 w-3.5" /> 刷新
+            <RefreshCw className={cn("h-3.5 w-3.5", snapshot.isFetching && "animate-spin")} /> 刷新
           </Button>
           <Button variant="secondary" size="sm" onClick={() => setTransferOpen(true)}>
             <Cloud className="h-3.5 w-3.5" /> 环境工具
@@ -495,23 +337,33 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
           {query && <button className="search-clear" aria-label="清空搜索" onClick={() => setQuery("")}><X className="h-3.5 w-3.5" /></button>}
         </div>
         <div className="filter-group">
-          <FilterButton active={agentFilter === "all"} onClick={() => setAgentFilter("all")}>全部</FilterButton>
-          {AGENTS.map((agent) => (
-            <FilterButton key={agent} active={agentFilter === agent} onClick={() => setAgentFilter(agent)}>
-              <AgentIcon agent={agent} size={13} /> {agentLabels[agent]}
-            </FilterButton>
-          ))}
-          <FilterButton active={statusFilter === "conflict"} onClick={() => setStatusFilter(statusFilter === "conflict" ? "all" : "conflict")}>冲突</FilterButton>
+          <Select value={agentFilter} onValueChange={(value) => setAgentFilter(value as AgentKind | "all")}>
+            <SelectTrigger className="agent-filter-trigger" aria-label="按 Agent 筛选">
+              {agentFilter === "all" ? <><ListFilter className="h-3.5 w-3.5" />所有 Agent</> : <><AgentIcon agent={agentFilter} size={14} /><span className="truncate">{agentLabels[agentFilter]}</span></>}
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">所有 Agent</SelectItem>
+              {agents.map((agent) => <SelectItem key={agent} value={agent}><span className="select-option"><AgentIcon agent={agent} size={14} />{agentLabels[agent]}</span></SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as StatusFilter)}>
+            <SelectTrigger className="status-filter-trigger" aria-label="按状态筛选">
+              <ListFilter className="h-3.5 w-3.5" />{statusFilter === "all" ? "所有状态" : statusFilter === "synced" ? "已同步" : statusFilter === "missing" ? "未同步" : "冲突"}
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">所有状态</SelectItem>
+              <SelectItem value="synced">已同步</SelectItem>
+              <SelectItem value="missing">未同步</SelectItem>
+              <SelectItem value="conflict">冲突</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
       <section className="workspace-list">
         <div className="workspace-list-header">
           <div>
-            <div className="section-title">Skills</div>
-            <div className="section-caption">{filtering ? `${visibleRows.length} / ${rows.length}` : visibleRows.length} 个 Skill · 点击行查看详情，点击 Agent 状态执行同步</div>
-          </div>
-          <div className="agent-legend">
-            {AGENTS.map((agent) => <span key={agent}><AgentIcon agent={agent} size={13} /> {agentLabels[agent]}</span>)}
+            <div className="section-title">技能列表</div>
+            <div className="section-caption">{filtering ? `${visibleRows.length} / ${rows.length}` : visibleRows.length} 个 Skill</div>
           </div>
         </div>
         <div className="skill-list">
@@ -528,6 +380,8 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
                     ? takeoverMutation.variables.agent
                     : null
               }
+              agents={agents}
+              agentLabels={agentLabels}
             />
           ))}
           {!visibleRows.length && <EmptyState title="没有匹配的 Skill" description="调整搜索或状态筛选后重试。" />}
@@ -556,6 +410,8 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
             onAgentAction={(agent, status) => handleAgentAction(selectedSkill.name, agent, status)}
             onTrash={() => trashMutation.mutate(selectedSkill.name)}
             trashing={trashMutation.isPending}
+            agents={agents}
+            agentLabels={agentLabels}
           />
         )}
       </AnimatePresence>
@@ -564,29 +420,20 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   );
 }
 
-function useEnvironmentSnapshot(environmentId: string) {
-  return useQuery({
-    queryKey: ["environment-snapshot", environmentId],
-    queryFn: () => api.getEnvironmentSnapshot(environmentId),
-    retry: false,
-    staleTime: environmentId === "local" ? 10_000 : 20_000,
-    gcTime: 5 * 60_000,
-    placeholderData: (previousData) => previousData,
-    refetchOnWindowFocus: false,
-    refetchInterval: environmentId === "local" ? false : 60_000,
-  });
-}
-
 const SkillRow = memo(function SkillRow({
   row,
   onOpen,
   onAgentAction,
   pendingAgent,
+  agents,
+  agentLabels,
 }: {
   row: SkillRowView;
   onOpen: () => void;
   onAgentAction: (agent: AgentKind, status: string) => void;
   pendingAgent?: AgentKind | null;
+  agents: AgentKind[];
+  agentLabels: Record<string, string>;
 }) {
   return (
     <div className="skill-row">
@@ -599,7 +446,7 @@ const SkillRow = memo(function SkillRow({
         </div>
       </button>
       <div className="skill-agent-status">
-        {AGENTS.map((agent) => {
+        {agents.map((agent) => {
           const status = agentStatus(row, agent);
           const synced = status === "linked" || status === "copied";
           const pending = pendingAgent === agent;
@@ -612,17 +459,23 @@ const SkillRow = memo(function SkillRow({
               disabled={pending}
             >
               {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <AgentIcon agent={agent} size={15} />}
+              <span className="agent-status-label">{agentLabels[agent]}</span>
               <span className="sr-only">{agentLabels[agent]} · {statusLabels[status] ?? status}</span>
             </button>
           );
         })}
       </div>
       <button className="skill-row-more" aria-label={`打开 ${row.displayName} 详情`} onClick={onOpen}>
-        <MoreHorizontal className="h-4 w-4" />
+        <ChevronRight className="h-4 w-4" />
       </button>
     </div>
   );
-}, (previous, next) => previous.row === next.row && previous.pendingAgent === next.pendingAgent);
+}, (previous, next) =>
+  previous.row === next.row
+  && previous.pendingAgent === next.pendingAgent
+  && previous.agents === next.agents
+  && previous.agentLabels === next.agentLabels
+);
 
 function SkillDrawer({
   row,
@@ -631,6 +484,8 @@ function SkillDrawer({
   onAgentAction,
   onTrash,
   trashing,
+  agents,
+  agentLabels,
 }: {
   row: SkillRowView;
   snapshot: EnvironmentSnapshot;
@@ -638,6 +493,8 @@ function SkillDrawer({
   onAgentAction: (agent: AgentKind, status: string) => void;
   onTrash: () => void;
   trashing: boolean;
+  agents: AgentKind[];
+  agentLabels: Record<string, string>;
 }) {
   const reduceMotion = useReducedMotion();
   const [trashOpen, setTrashOpen] = useState(false);
@@ -673,7 +530,7 @@ function SkillDrawer({
           <div className="drawer-section">
             <div className="drawer-section-title">Agent 状态</div>
             <div className="drawer-status-list">
-              {AGENTS.map((agent) => {
+              {agents.map((agent) => {
                 const status = agentStatus(row, agent);
                 return (
                   <button key={agent} className="drawer-status-row" onClick={() => onAgentAction(agent, status)}>
@@ -842,16 +699,17 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
       <Plus className="h-3.5 w-3.5" /> 添加来源
     </Button>
   );
+  const pageSubtitle = "Git、本地目录和 SSH Git 来源。";
   if (snapshot.isLoading) {
     return (
-      <PageShell title="安装来源" subtitle={`${environment.name} 的 Git、本地目录和 SSH Git 来源。`} environment={environment} actions={sourceActions}>
+      <PageShell title="安装来源" subtitle={pageSubtitle} environment={environment} actions={sourceActions}>
         <PageLoading />
       </PageShell>
     );
   }
   if (snapshot.isError || !snapshot.data) {
     return (
-      <PageShell title="安装来源" subtitle={`${environment.name} 的 Git、本地目录和 SSH Git 来源。`} environment={environment} actions={sourceActions}>
+      <PageShell title="安装来源" subtitle={pageSubtitle} environment={environment} actions={sourceActions}>
         <PageError title="无法读取安装来源" message={getErrorMessage(snapshot.error)} onRetry={() => void snapshot.refetch()} />
       </PageShell>
     );
@@ -859,7 +717,7 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   return (
     <PageShell
       title="安装来源"
-      subtitle={`${environment.name} 的 Git、本地目录和 SSH Git 来源。`}
+      subtitle={pageSubtitle}
       environment={environment}
       transitioning={snapshot.isPlaceholderData}
       actions={sourceActions}
@@ -1064,14 +922,49 @@ function SourceForm({ loading, onSubmit }: { loading: boolean; onSubmit: (input:
 }
 
 function SettingsPage({ environment, theme, onThemeChange }: { environment: EnvironmentSummary; theme: Theme; onThemeChange: (theme: Theme) => void }) {
+  const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const [hubDir, setHubDir] = useState("");
+  const [editingAgent, setEditingAgent] = useState<AgentConfig | null>(null);
+  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const preferences = useQuery({ queryKey: ["preferences"], queryFn: api.getPreferences, retry: false });
   const updatePreferences = useMutation({
     mutationFn: (defaultSyncMethod: SyncMethod) => api.updatePreferences({ defaultSyncMethod }),
     onSuccess: () => showToast({ tone: "success", title: "设置已保存" }),
     onError: (error) => showToast({ tone: "error", title: "设置保存失败", description: getErrorMessage(error) }),
   });
+  const updateHubDir = useMutation({
+    mutationFn: () => api.updateHubDir(hubDir.trim()),
+    onSuccess: async () => {
+      showToast({ tone: "success", title: "Hub 目录已更新", description: hubDir.trim() });
+      await Promise.all([
+        preferences.refetch(),
+        queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] }),
+      ]);
+    },
+    onError: (error) => showToast({ tone: "error", title: "Hub 目录更新失败", description: getErrorMessage(error) }),
+  });
+  const toggleAgent = useMutation({
+    mutationFn: (agent: AgentConfig) => api.upsertAgent({
+      id: agent.kind,
+      label: agent.label,
+      skillsDir: agent.skillsDir ?? agent.skills_dir ?? "",
+      enabled: !agent.enabled,
+    }),
+    onSuccess: async (saved) => {
+      showToast({ tone: "success", title: saved.enabled ? "Agent 已启用" : "Agent 已停用", description: saved.label });
+      await Promise.all([
+        preferences.refetch(),
+        queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] }),
+      ]);
+    },
+    onError: (error) => showToast({ tone: "error", title: "Agent 状态更新失败", description: getErrorMessage(error) }),
+  });
   const snapshot = useEnvironmentSnapshot(environment.id);
+  useEffect(() => {
+    const value = preferences.data?.hubDir ?? preferences.data?.hub_dir;
+    if (value) setHubDir(value);
+  }, [preferences.data?.hubDir, preferences.data?.hub_dir]);
   const configPaths = snapshot.data ? buildConfigPathRows(snapshot.data.config) : [];
   const configSummary = snapshot.data
     ? [
@@ -1101,122 +994,138 @@ function SettingsPage({ environment, theme, onThemeChange }: { environment: Envi
       environment={environment}
       transitioning={snapshot.isPlaceholderData}
     >
+      <div className="settings-layout">
       <section className="settings-section">
         <div className="settings-section-header"><div><div className="section-title">应用</div><div className="section-caption">影响所有环境的显示和默认策略</div></div></div>
         <div className="settings-row"><div><div className="font-medium">主题</div><div className="text-xs text-muted-foreground">跟随系统或手动选择</div></div><div className="segmented-control">{(["system", "light", "dark"] as Theme[]).map((item) => <button key={item} className={cn("segmented-item", theme === item && "segmented-item-active")} onClick={() => onThemeChange(item)}>{item === "system" ? "系统" : item === "light" ? <><Sun className="h-3.5 w-3.5" />浅色</> : <><Moon className="h-3.5 w-3.5" />深色</>}</button>)}</div></div>
         <div className="settings-row"><div><div className="font-medium">默认同步方式</div><div className="text-xs text-muted-foreground">本机和 SSH 环境 Agent 的默认同步方式</div></div><div className="segmented-control" aria-busy={updatePreferences.isPending}>{(["auto", "symlink", "copy"] as SyncMethod[]).map((item) => <button key={item} disabled={updatePreferences.isPending} className={cn("segmented-item", (preferences.data?.defaultSyncMethod ?? preferences.data?.default_sync_method ?? "auto") === item && "segmented-item-active")} onClick={() => updatePreferences.mutate(item)}>{item === "auto" ? "自动" : item === "symlink" ? "链接" : "复制"}</button>)}</div></div>
       </section>
+      {environment.kind === "local" && <section className="settings-section">
+        <div className="settings-section-header"><div><div className="section-title">统一技能库</div><div className="section-caption">只更新管理路径，不搬运原目录内容</div></div></div>
+        <form className="settings-form-row" onSubmit={(event) => { event.preventDefault(); if (hubDir.trim()) updateHubDir.mutate(); }}>
+          <div className="settings-form-copy">
+            <label className="font-medium" htmlFor="hub-directory">Hub 目录</label>
+            <div className="text-xs leading-5 text-muted-foreground">所有 Agent 统一引用的技能目录</div>
+          </div>
+          <div className="settings-form-control">
+            <div className="settings-input-row">
+              <Input id="hub-directory" value={hubDir} onChange={(event) => setHubDir(event.target.value)} placeholder="~/.cc-switch/skills" />
+              <Button pending={updateHubDir.isPending} pendingLabel="保存中" disabled={!hubDir.trim()}><Save className="h-3.5 w-3.5" /> 保存</Button>
+            </div>
+            <div className="settings-help">支持 `~/.cc-switch/skills`。不能与已启用的 Agent 目录相同。</div>
+          </div>
+        </form>
+      </section>}
+      {environment.kind === "local" && <section className="settings-section">
+        <div className="settings-section-header settings-section-header-actions">
+          <div><div className="section-title">Agent 目录</div><div className="section-caption">配置本机 Agent 的名称、技能目录和启用状态</div></div>
+          <Button size="sm" onClick={() => { setEditingAgent(null); setAgentDialogOpen(true); }}><Plus className="h-3.5 w-3.5" /> 添加 Agent</Button>
+        </div>
+        <div className="agent-config-list">
+          {(preferences.data?.agents ?? []).map((agent) => {
+            const editing = () => { setEditingAgent(agent); setAgentDialogOpen(true); };
+            const pending = toggleAgent.isPending && toggleAgent.variables?.kind === agent.kind;
+            return (
+              <div key={agent.kind} className="agent-config-row">
+                <button className="agent-config-main" onClick={editing}>
+                  <span className="agent-config-icon"><AgentIcon agent={agent.kind} size={16} /></span>
+                  <span className="agent-config-copy"><strong>{agent.label}</strong><code>{agent.skillsDir ?? agent.skills_dir}</code></span>
+                </button>
+                <div className="agent-config-actions">
+                  <button
+                    className="agent-toggle"
+                    role="switch"
+                    aria-checked={agent.enabled}
+                    aria-label={`${agent.enabled ? "停用" : "启用"} ${agent.label}`}
+                    title={`${agent.enabled ? "停用" : "启用"} ${agent.label}`}
+                    disabled={toggleAgent.isPending}
+                    data-enabled={agent.enabled || undefined}
+                    data-pending={pending || undefined}
+                    onClick={() => toggleAgent.mutate(agent)}
+                  >
+                    <span className="agent-toggle-knob" />
+                  </button>
+                  <button className="icon-button" aria-label={`编辑 ${agent.label}`} title={`编辑 ${agent.label}`} onClick={editing}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>}
       <section className="settings-section">
         <div className="settings-section-header"><div><div className="section-title">当前环境</div><div className="section-caption">{environment.name}</div></div></div>
         {configSummary.length > 0 && <div className="config-summary-grid">{configSummary.map((item) => <div key={item.label} className="config-summary-item"><span>{item.label}</span><strong>{item.value}</strong></div>)}</div>}
         {configPaths.map(({ label, value }) => <button key={label} className="settings-path-row" onClick={() => void api.openPath(value)}><span className="font-medium">{settingsLabel(label)}</span><span className="muted-path">{value}</span><ExternalLink className="h-3.5 w-3.5" /></button>)}
         {environment.kind === "remote" && snapshot.data && <div className="capability-grid">{Object.entries(snapshot.data.capabilities).filter(([key]) => key !== "message").map(([key, value]) => <div key={key} className="capability-item"><span>{key}</span><span className={value ? "capability-ok" : "capability-missing"}>{value ? "可用" : "缺少"}</span></div>)}</div>}
       </section>
+      </div>
+      <AgentConfigDialog
+        open={agentDialogOpen}
+        agent={editingAgent}
+        onOpenChange={setAgentDialogOpen}
+        onSaved={async () => {
+          setAgentDialogOpen(false);
+          await Promise.all([
+            preferences.refetch(),
+            queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] }),
+          ]);
+        }}
+      />
     </PageShell>
   );
 }
 
-function AddEnvironmentDialog({ open, onOpenChange, onAdded }: { open: boolean; onOpenChange: (open: boolean) => void; onAdded: (environment: EnvironmentSummary) => void }) {
+function AgentConfigDialog({ open, agent, onOpenChange, onSaved }: { open: boolean; agent: AgentConfig | null; onOpenChange: (open: boolean) => void; onSaved: () => Promise<void> }) {
   const { showToast } = useToast();
-  const [name, setName] = useState("");
-  const [host, setHost] = useState("");
-  const [user, setUser] = useState("");
-  const [port, setPort] = useState("");
-  const sshHosts = useQuery({ queryKey: ["ssh-hosts"], queryFn: api.discoverSshHosts, enabled: open, retry: false });
-  const add = useMutation({
-    mutationFn: () => api.addRemote({ name: name.trim() || host.trim(), host: host.trim(), user: user.trim() || undefined, port: port.trim() ? Number(port) : undefined }),
-    onSuccess: (remote) => {
-      const environment = { id: `remote:${remote.name}`, name: remote.name, kind: "remote" as const, host: remote.host, user: remote.user, port: remote.port };
-      showToast({ tone: "success", title: "SSH 环境已添加", description: remote.name });
-      onAdded(environment);
-      onOpenChange(false);
-      setName(""); setHost(""); setUser(""); setPort("");
+  const [id, setId] = useState("");
+  const [label, setLabel] = useState("");
+  const [skillsDir, setSkillsDir] = useState("");
+  const [enabled, setEnabled] = useState(true);
+  useEffect(() => {
+    if (!open) return;
+    setId(agent?.kind ?? "");
+    setLabel(agent?.label ?? "");
+    setSkillsDir(agent?.skillsDir ?? agent?.skills_dir ?? "");
+    setEnabled(agent?.enabled ?? true);
+  }, [agent, open]);
+  const save = useMutation({
+    mutationFn: () => api.upsertAgent({ id: id.trim(), label: label.trim(), skillsDir: skillsDir.trim(), enabled }),
+    onSuccess: async () => {
+      showToast({ tone: "success", title: "Agent 配置已保存", description: label.trim() });
+      await onSaved();
     },
-    onError: (error) => showToast({ tone: "error", title: "添加 SSH 环境失败", description: getErrorMessage(error) }),
+    onError: (error) => showToast({ tone: "error", title: "Agent 配置保存失败", description: getErrorMessage(error) }),
   });
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>添加 SSH 环境</DialogTitle><DialogDescription>添加后会和本机一样直接出现在左侧环境列表。</DialogDescription></DialogHeader>
-        {sshHosts.data && sshHosts.data.length > 0 && <div className="space-y-1"><div className="field-label">SSH 配置</div>{sshHosts.data.map((item) => <button key={item.alias} className="ssh-host-option" disabled={item.added} onClick={() => { setName(item.alias); setHost(item.alias); setUser(item.user ?? ""); setPort(item.port ? String(item.port) : ""); }}><span>{item.alias}</span><span className="muted-path">{item.hostname ?? item.alias}</span></button>)}</div>}
-        <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (host.trim()) add.mutate(); }}>
-          <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="显示名称，可选" />
-          <Input value={host} onChange={(event) => setHost(event.target.value)} placeholder="SSH Host / Alias" autoFocus />
-          <Input value={user} onChange={(event) => setUser(event.target.value)} placeholder="用户，可选" />
-          <Input value={port} onChange={(event) => setPort(event.target.value)} placeholder="端口，可选" />
-          <div className="flex justify-end"><Button disabled={!host.trim()} pending={add.isPending} pendingLabel="添加中">添加环境</Button></div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function PageShell({
-  title,
-  subtitle,
-  environment,
-  actions,
-  children,
-  transitioning = false,
-}: {
-  title: string;
-  subtitle: string;
-  environment: EnvironmentSummary;
-  actions?: ReactNode;
-  children: ReactNode;
-  transitioning?: boolean;
-}) {
-  const connection = useQuery({
-    queryKey: ["environment-connection", environment.id],
-    queryFn: () => api.checkEnvironmentConnection(environment.id),
-    enabled: environment.kind === "remote",
-    retry: false,
-    staleTime: 15_000,
-    gcTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
+  const remove = useMutation({
+    mutationFn: () => api.removeAgent(id),
+    onSuccess: async () => {
+      showToast({ tone: "success", title: "Agent 配置已移除", description: "目录和已有链接未被删除" });
+      await onSaved();
+    },
+    onError: (error) => showToast({ tone: "error", title: "Agent 配置移除失败", description: getErrorMessage(error) }),
   });
-  const connected = environment.kind === "local" || connection.data?.status === "connected";
-  return (
-    <div
-      key={`${environment.id}:${title}`}
-      className="page-shell"
-      data-transitioning={transitioning || undefined}
-      aria-busy={transitioning}
-    >
-      {transitioning && <div className="environment-loading-line" aria-hidden="true" />}
-      <header className="page-header">
-        <div className="min-w-0">
-          <div className="environment-breadcrumb"><span>{environment.kind === "local" ? "本机环境" : "SSH 环境"}</span><ChevronRight className="h-3.5 w-3.5" /><span className="truncate">{environment.name}</span><StatusDot tone={connection.isFetching ? "info" : connected ? "success" : "danger"} spinning={connection.isFetching} /></div>
-          <h1 className="page-title">{title}</h1>
-          <p className="page-subtitle">{subtitle}</p>
+  const valid = Boolean(id.trim() && label.trim() && skillsDir.trim());
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent>
+      <DialogHeader><DialogTitle>{agent ? "编辑 Agent" : "添加 Agent"}</DialogTitle><DialogDescription>保存配置不会立即同步、移动或删除技能。</DialogDescription></DialogHeader>
+      <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (valid) save.mutate(); }}>
+        <div><div className="field-label">Agent ID</div><Input value={id} disabled={Boolean(agent)} onChange={(event) => setId(event.target.value)} placeholder="例如 hermes" /></div>
+        <div><div className="field-label">显示名称</div><Input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="例如 Hermes" /></div>
+        <div><div className="field-label">技能目录</div><Input value={skillsDir} onChange={(event) => setSkillsDir(event.target.value)} placeholder="~/.hermes/skills" /></div>
+        <label className="agent-enabled-control"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>启用扫描与同步</span></label>
+        <div className="flex justify-between gap-2">
+          <div>{agent && <Button type="button" variant="destructive" pending={remove.isPending} pendingLabel="移除中" onClick={() => remove.mutate()}><Trash2 className="h-3.5 w-3.5" /> 移除配置</Button>}</div>
+          <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>取消</Button><Button pending={save.isPending} pendingLabel="保存中" disabled={!valid}><Save className="h-3.5 w-3.5" /> 保存</Button></div>
         </div>
-        {actions && <div className="page-actions">{actions}</div>}
-      </header>
-      <div className="page-content" inert={transitioning ? true : undefined}>
-        {children}
-      </div>
-    </div>
-  );
+      </form>
+    </DialogContent>
+  </Dialog>;
 }
 
 function StatItem({ label, value, tone = "default" }: { label: string; value: number; tone?: "default" | "success" | "muted" | "danger" }) {
   return <div className="stat-item"><div className="kicker">{label}</div><div className={cn("stat-value", tone === "success" && "stat-value-success", tone === "danger" && "stat-value-danger", tone === "muted" && "stat-value-muted")}>{value}</div></div>;
-}
-
-function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return <button className={cn("filter-button", active && "filter-button-active")} onClick={onClick}>{children}</button>;
-}
-
-function EmptyState({ title, description }: { title: string; description: string }) {
-  return <div className="empty-state"><div className="empty-state-icon"><Database className="h-4 w-4" /></div><div className="font-medium">{title}</div><div className="mt-1 text-sm text-muted-foreground">{description}</div></div>;
-}
-
-function PageLoading({ compact = false, label = "正在读取环境状态…" }: { compact?: boolean; label?: string }) {
-  return <div className={cn("loading-state", compact && "loading-state-compact")} role="status"><Loader2 className="h-4 w-4 animate-spin" /><span>{label}</span></div>;
-}
-
-function PageError({ title, message, onRetry }: { title: string; message: string; onRetry: () => void }) {
-  return <div className="error-state" role="alert"><CircleAlert className="h-4 w-4 shrink-0" /><div className="min-w-0 flex-1"><div className="font-medium">{title}</div><div className="mt-1 break-words text-sm">{message}</div></div><Button variant="secondary" size="sm" onClick={onRetry}>重试</Button></div>;
 }
 
 function compareStatusLabel(status: string) {

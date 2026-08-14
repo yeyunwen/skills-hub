@@ -25,15 +25,16 @@ use skills_hub_core::{
     remote_remove_source as core_remote_remove_source, remote_scan as core_remote_scan,
     remote_scan_source as core_remote_scan_source,
     remote_sync_local_agent_skill as core_remote_sync_local_agent_skill, remote_sync_plan,
-    remote_sync_skill as core_remote_sync_skill, remove_agent_skill as core_remove_agent_skill,
-    remove_hub_skill as core_remove_hub_skill, remove_remote as core_remove_remote,
-    remove_source as core_remove_source, run_remote_sync, scan_all as core_scan_all,
-    scan_source as core_scan_source, sync_agents as core_sync_agents,
+    remote_sync_skill as core_remote_sync_skill, remove_agent as core_remove_agent,
+    remove_agent_skill as core_remove_agent_skill, remove_hub_skill as core_remove_hub_skill,
+    remove_remote as core_remove_remote, remove_source as core_remove_source, run_remote_sync,
+    scan_all as core_scan_all, scan_source as core_scan_source, sync_agents as core_sync_agents,
     takeover_agent_skill as core_takeover_agent_skill,
     transfer_environment_skill as core_transfer_environment_skill,
     trash_environment_skill as core_trash_environment_skill, unlink_skill as core_unlink_skill,
-    update_preferences as core_update_preferences, AgentKind, EnvironmentKind, InstallOptions,
-    RemoteAgentScanResult, RemoteSkillInfo, SyncMethod,
+    update_hub_dir as core_update_hub_dir, update_preferences as core_update_preferences,
+    upsert_agent as core_upsert_agent, AgentKind, EnvironmentKind, InstallOptions,
+    RemoteAgentScanResult, RemoteSkillInfo, SyncMethod, REMOTE_HUB_DIR,
 };
 use std::{
     fs::{self, File},
@@ -42,20 +43,6 @@ use std::{
 };
 
 const MAX_FILE_PREVIEW_BYTES: u64 = 512 * 1024;
-
-/// Dashboard 聚合数据，避免前端为了首页重复调用多个 command。
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DashboardDto {
-    hub_count: usize,
-    source_count: usize,
-    codex_count: usize,
-    claude_count: usize,
-    cursor_count: usize,
-    openclaw_count: usize,
-    conflict_count: usize,
-    missing_count: usize,
-}
 
 /// 添加 source 的前端输入。
 #[derive(Debug, Deserialize)]
@@ -164,6 +151,27 @@ struct RemoteLocalAgentSkillInput {
 #[serde(rename_all = "camelCase")]
 struct UpdatePreferencesInput {
     default_sync_method: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateHubDirInput {
+    hub_dir: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpsertAgentInput {
+    id: String,
+    label: String,
+    skills_dir: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoveAgentConfigInput {
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -300,37 +308,6 @@ async fn init_hub() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn get_dashboard() -> Result<DashboardDto, String> {
-    run_blocking(|| {
-        let scan = core_scan_all().map_err(to_error)?;
-        let sources = core_list_sources().map_err(to_error)?;
-        let statuses = core_list_status().map_err(to_error)?;
-        let mut conflict_count = 0;
-        let mut missing_count = 0;
-        for skill in &statuses {
-            for agent in &skill.agents {
-                match agent.status {
-                    skills_hub_core::SkillAgentStatusKind::Conflict => conflict_count += 1,
-                    skills_hub_core::SkillAgentStatusKind::Missing => missing_count += 1,
-                    _ => {}
-                }
-            }
-        }
-        Ok(DashboardDto {
-            hub_count: scan.hub.len(),
-            source_count: sources.len(),
-            codex_count: count_agent(&scan, AgentKind::Codex),
-            claude_count: count_agent(&scan, AgentKind::Claude),
-            cursor_count: count_agent(&scan, AgentKind::Cursor),
-            openclaw_count: count_agent(&scan, AgentKind::OpenClaw),
-            conflict_count,
-            missing_count,
-        })
-    })
-    .await
-}
-
-#[tauri::command]
 async fn list_environments() -> Result<serde_json::Value, String> {
     run_blocking(|| to_value(core_list_environments())).await
 }
@@ -341,14 +318,16 @@ async fn get_environment_snapshot(
 ) -> Result<EnvironmentSnapshotDto, String> {
     run_blocking(move || {
         let environment = core_get_environment(&input.environment_id).map_err(to_error)?;
-        let tools = parse_agents(&input.tools.unwrap_or_else(|| {
-            vec![
-                "codex".into(),
-                "claude".into(),
-                "cursor".into(),
-                "openclaw".into(),
-            ]
-        }))?;
+        let tools = match input.tools {
+            Some(tools) => parse_agents(&tools)?,
+            None => skills_hub_core::load_config()
+                .map_err(to_error)?
+                .agents
+                .into_values()
+                .filter(|agent| agent.enabled)
+                .map(|agent| agent.kind)
+                .collect(),
+        };
         match environment.kind {
             EnvironmentKind::Local => {
                 let config = core_init_hub(false).map_err(to_error)?;
@@ -391,7 +370,7 @@ async fn get_environment_snapshot(
                         statuses: serde_json::json!([]),
                         sources: serde_json::json!([]),
                         config: serde_json::json!({
-                            "hubDir": "~/.agents/skills",
+                            "hubDir": REMOTE_HUB_DIR,
                             "configPath": "~/.config/skills-hub/config.json",
                             "backupsDir": "~/.config/skills-hub/backups"
                         }),
@@ -417,7 +396,7 @@ async fn get_environment_snapshot(
                     )
                     .map_err(to_error)?,
                     config: serde_json::json!({
-                        "hubDir": "~/.agents/skills",
+                        "hubDir": REMOTE_HUB_DIR,
                         "configPath": "~/.config/skills-hub/config.json",
                         "backupsDir": "~/.config/skills-hub/backups"
                     }),
@@ -569,14 +548,14 @@ async fn takeover_environment_skill(
             EnvironmentKind::Remote => {
                 let removed = core_remote_remove_skill(
                     &environment.name,
-                    agent,
+                    agent.clone(),
                     &input.skill_name,
                     input.dry_run.unwrap_or(false),
                 )
                 .map_err(to_error)?;
                 let linked = core_remote_link_hub_skill(
                     &environment.name,
-                    agent,
+                    agent.clone(),
                     &input.skill_name,
                     method,
                     input.dry_run.unwrap_or(false),
@@ -1136,6 +1115,36 @@ async fn update_preferences(input: UpdatePreferencesInput) -> Result<serde_json:
 }
 
 #[tauri::command]
+async fn update_hub_dir(input: UpdateHubDirInput) -> Result<serde_json::Value, String> {
+    run_blocking(move || {
+        log_command("hub.directory.update", "更新 Hub 目录", || {
+            core_update_hub_dir(&input.hub_dir)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn upsert_agent(input: UpsertAgentInput) -> Result<serde_json::Value, String> {
+    run_blocking(move || {
+        log_command("agent.config.upsert", "保存 Agent 配置", || {
+            core_upsert_agent(&input.id, &input.label, &input.skills_dir, input.enabled)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_agent(input: RemoveAgentConfigInput) -> Result<serde_json::Value, String> {
+    run_blocking(move || {
+        log_command("agent.config.remove", "删除 Agent 配置", || {
+            core_remove_agent(&input.id)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_logs_dir() -> Result<String, String> {
     run_blocking(|| {
         skills_hub_core::logs_dir()
@@ -1150,7 +1159,6 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             init_hub,
-            get_dashboard,
             list_environments,
             get_environment_snapshot,
             check_environment_connection,
@@ -1195,18 +1203,13 @@ pub fn run() {
             remote_remove_skill,
             get_preferences,
             update_preferences,
+            update_hub_dir,
+            upsert_agent,
+            remove_agent,
             get_logs_dir,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run skills-hub desktop");
-}
-
-fn count_agent(scan: &skills_hub_core::ScanAllResult, agent: AgentKind) -> usize {
-    scan.agents
-        .iter()
-        .find(|item| item.agent == agent)
-        .map(|item| item.skills.len())
-        .unwrap_or_default()
 }
 
 fn parse_agents(values: &[String]) -> Result<Vec<AgentKind>, String> {
@@ -1214,7 +1217,13 @@ fn parse_agents(values: &[String]) -> Result<Vec<AgentKind>, String> {
 }
 
 fn parse_agent(value: &str) -> Result<AgentKind, String> {
-    AgentKind::parse(value).ok_or_else(|| format!("unknown agent: {value}"))
+    let agent = AgentKind::parse(value).ok_or_else(|| format!("invalid agent id: {value}"))?;
+    let config = skills_hub_core::load_config().map_err(to_error)?;
+    config
+        .agents
+        .contains_key(&agent)
+        .then_some(agent)
+        .ok_or_else(|| format!("agent is not configured: {value}"))
 }
 
 fn parse_sync_method(value: &str) -> Result<SyncMethod, String> {

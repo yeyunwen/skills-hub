@@ -1,47 +1,48 @@
-use crate::{expand_path, SyncMethod};
-use anyhow::Result;
+use crate::{expand_path, normalize_path, SyncMethod};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 
-/// skills-hub 当前支持的本机 Agent 类型。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum AgentKind {
-    /// OpenAI Codex CLI / Desktop 的 skill 目录。
-    #[serde(rename = "codex")]
-    Codex,
-    /// Claude Code 的 skill 目录。
-    #[serde(rename = "claude")]
-    Claude,
-    /// Cursor 的 skill 目录。
-    #[serde(rename = "cursor")]
-    Cursor,
-    /// OpenClaw 的 skill 目录。
-    #[serde(rename = "openclaw")]
-    OpenClaw,
-}
+/// Agent 的稳定 ID。使用字符串是为了允许用户配置任意 Coding Agent。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AgentKind(String);
 
 impl AgentKind {
-    /// 返回 CLI 中使用的短名称。
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Codex => "codex",
-            Self::Claude => "claude",
-            Self::Cursor => "cursor",
-            Self::OpenClaw => "openclaw",
-        }
+    /// 返回配置和 CLI 使用的稳定 ID。
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 
-    /// 解析命令行传入的 agent 名称。
+    /// 解析并校验 Agent ID。
     pub fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "codex" => Some(Self::Codex),
-            "claude" => Some(Self::Claude),
-            "cursor" => Some(Self::Cursor),
-            "openclaw" => Some(Self::OpenClaw),
-            _ => None,
+        let id = value.trim().to_ascii_lowercase();
+        if id.is_empty()
+            || !id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
+        {
+            return None;
         }
+        Some(Self(id))
+    }
+
+    pub fn codex() -> Self {
+        Self("codex".into())
+    }
+
+    pub fn claude() -> Self {
+        Self("claude".into())
+    }
+
+    pub fn cursor() -> Self {
+        Self("cursor".into())
+    }
+
+    pub fn openclaw() -> Self {
+        Self("openclaw".into())
     }
 }
 
@@ -54,6 +55,13 @@ pub struct AgentConfig {
     pub label: String,
     /// 该 Agent 读取 skills 的目录。
     pub skills_dir: PathBuf,
+    /// 是否参与扫描、展示和同步。
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+}
+
+fn enabled_by_default() -> bool {
+    true
 }
 
 /// Git 或本地 skill 来源配置。
@@ -120,6 +128,9 @@ pub struct HubConfig {
     pub logs_dir: PathBuf,
     /// 本机 Agent 配置。
     pub agents: BTreeMap<AgentKind, AgentConfig>,
+    /// 用户显式移除的内置 Agent，防止配置升级时重新补回。
+    #[serde(default)]
+    pub removed_agents: BTreeSet<AgentKind>,
     /// 已登记的 skill sources。
     pub sources: BTreeMap<String, SkillSource>,
     /// 已登记的 SSH 环境连接。
@@ -134,6 +145,10 @@ pub struct HubConfig {
 pub struct HubPreferences {
     /// 默认同步方式；未显式指定时所有本机/远程同步都使用它。
     pub default_sync_method: SyncMethod,
+    /// 当前 Hub 实体目录。
+    pub hub_dir: PathBuf,
+    /// 可配置的本机 Agent。
+    pub agents: Vec<AgentConfig>,
 }
 
 /// 读取偏好设置。
@@ -141,6 +156,8 @@ pub fn get_preferences() -> Result<HubPreferences> {
     let config = load_config()?;
     Ok(HubPreferences {
         default_sync_method: config.default_sync_method,
+        hub_dir: config.hub_dir,
+        agents: config.agents.into_values().collect(),
     })
 }
 
@@ -151,7 +168,86 @@ pub fn update_preferences(default_sync_method: SyncMethod) -> Result<HubPreferen
     save_config(&config)?;
     Ok(HubPreferences {
         default_sync_method,
+        hub_dir: config.hub_dir,
+        agents: config.agents.into_values().collect(),
     })
+}
+
+/// 更新 Hub 实体目录。此操作只修改配置，不搬运旧目录内容。
+pub fn update_hub_dir(value: &str) -> Result<HubConfig> {
+    let mut config = load_config()?;
+    if value.trim().is_empty() {
+        return Err(anyhow!("hub directory cannot be empty"));
+    }
+    let hub_dir = normalize_path(expand_path(value.trim()))?;
+    for agent in config.agents.values().filter(|agent| agent.enabled) {
+        if normalize_path(&agent.skills_dir)? == hub_dir {
+            return Err(anyhow!(
+                "hub directory cannot equal an enabled agent directory"
+            ));
+        }
+    }
+    fs::create_dir_all(&hub_dir)?;
+    config.hub_dir = hub_dir;
+    save_config(&config)?;
+    Ok(config)
+}
+
+/// 新增或更新一个本机 Agent。此操作不会同步或删除任何技能。
+pub fn upsert_agent(id: &str, label: &str, skills_dir: &str, enabled: bool) -> Result<AgentConfig> {
+    let mut config = load_config()?;
+    let kind = AgentKind::parse(id).ok_or_else(|| anyhow!("invalid agent id: {id}"))?;
+    let label = label.trim();
+    if label.is_empty() || skills_dir.trim().is_empty() {
+        return Err(anyhow!("agent label and skills directory are required"));
+    }
+    let skills_dir = normalize_path(expand_path(skills_dir.trim()))?;
+    if normalize_path(&config.hub_dir)? == skills_dir {
+        return Err(anyhow!("agent directory cannot equal hub directory"));
+    }
+    let path_changed = config.agents.get(&kind).is_some_and(|agent| {
+        normalize_path(&agent.skills_dir).map_or(true, |path| path != skills_dir)
+    });
+    let agent = AgentConfig {
+        kind: kind.clone(),
+        label: label.to_string(),
+        skills_dir,
+        enabled,
+    };
+    if path_changed {
+        clear_agent_lock_records(&config, &kind)?;
+    }
+    config.removed_agents.remove(&kind);
+    config.agents.insert(kind, agent.clone());
+    save_config(&config)?;
+    Ok(agent)
+}
+
+/// 删除 Agent 配置。已有目录和链接保持不动。
+pub fn remove_agent(id: &str) -> Result<Option<AgentConfig>> {
+    let mut config = load_config()?;
+    let kind = AgentKind::parse(id).ok_or_else(|| anyhow!("invalid agent id: {id}"))?;
+    let removed = config.agents.remove(&kind);
+    if removed.is_some() {
+        clear_agent_lock_records(&config, &kind)?;
+        config.removed_agents.insert(kind);
+    }
+    save_config(&config)?;
+    Ok(removed)
+}
+
+fn clear_agent_lock_records(config: &HubConfig, kind: &AgentKind) -> Result<()> {
+    let mut lock = load_lock(config)?;
+    if remove_agent_lock_records(&mut lock, kind) {
+        save_lock(config, &lock)?;
+    }
+    Ok(())
+}
+
+fn remove_agent_lock_records(lock: &mut HubLock, kind: &AgentKind) -> bool {
+    let previous_len = lock.managed_links.len();
+    lock.managed_links.retain(|record| &record.agent != kind);
+    lock.managed_links.len() != previous_len
 }
 
 /// lock 中记录 skills-hub 自己创建过的链接，避免误删用户真实目录。
@@ -209,51 +305,50 @@ pub fn default_config() -> HubConfig {
     let backups_dir = expand_path("~/.config/skills-hub/backups");
     let cache_dir = expand_path("~/.cache/skills-hub/sources");
     let logs_dir = default_logs_dir();
-    let mut agents = BTreeMap::new();
-    agents.insert(
-        AgentKind::Codex,
-        AgentConfig {
-            kind: AgentKind::Codex,
-            label: "Codex".to_string(),
-            skills_dir: expand_path("~/.codex/skills"),
-        },
-    );
-    agents.insert(
-        AgentKind::Claude,
-        AgentConfig {
-            kind: AgentKind::Claude,
-            label: "Claude".to_string(),
-            skills_dir: expand_path("~/.claude/skills"),
-        },
-    );
-    agents.insert(
-        AgentKind::Cursor,
-        AgentConfig {
-            kind: AgentKind::Cursor,
-            label: "Cursor".to_string(),
-            skills_dir: expand_path("~/.cursor/skills"),
-        },
-    );
-    agents.insert(
-        AgentKind::OpenClaw,
-        AgentConfig {
-            kind: AgentKind::OpenClaw,
-            label: "OpenClaw".to_string(),
-            skills_dir: expand_path("~/.openclaw/skills"),
-        },
-    );
+    let agents = default_agents();
     HubConfig {
-        hub_dir: expand_path("~/.agents/skills"),
+        hub_dir: expand_path("~/.cc-switch/skills"),
         config_path,
         lock_path,
         backups_dir,
         cache_dir,
         logs_dir,
         agents,
+        removed_agents: BTreeSet::new(),
         sources: BTreeMap::new(),
         remotes: BTreeMap::new(),
         default_sync_method: SyncMethod::Auto,
     }
+}
+
+fn default_agents() -> BTreeMap<AgentKind, AgentConfig> {
+    [
+        ("codex", "Codex", "~/.codex/skills"),
+        ("claude", "Claude", "~/.claude/skills"),
+        ("cursor", "Cursor", "~/.cursor/skills"),
+        ("openclaw", "OpenClaw", "~/.openclaw/skills"),
+        ("agents", "通用 Agent / Lark", "~/.agents/skills"),
+        ("hermes", "Hermes", "~/.hermes/skills"),
+        ("continue", "Continue", "~/.continue/skills"),
+        ("windsurf", "Windsurf", "~/.codeium/windsurf/skills"),
+        ("trae", "Trae", "~/.trae/skills"),
+        ("qoder", "Qoder", "~/.qoder/skills"),
+        ("zode", "Zode", "~/.zode/skills"),
+    ]
+    .into_iter()
+    .map(|(id, label, directory)| {
+        let kind = AgentKind::parse(id).expect("built-in agent id must be valid");
+        (
+            kind.clone(),
+            AgentConfig {
+                kind,
+                label: label.into(),
+                skills_dir: expand_path(directory),
+                enabled: true,
+            },
+        )
+    })
+    .collect()
 }
 
 /// 读取配置；不存在时返回默认配置但不写磁盘。
@@ -270,9 +365,12 @@ pub fn load_config() -> Result<HubConfig> {
 /// 为旧配置补齐新版本新增的 Agent，不覆盖用户自定义过的已有目录。
 fn fill_missing_default_agents(mut config: HubConfig, fallback: &HubConfig) -> HubConfig {
     for (agent, agent_config) in &fallback.agents {
+        if config.removed_agents.contains(agent) {
+            continue;
+        }
         config
             .agents
-            .entry(*agent)
+            .entry(agent.clone())
             .or_insert_with(|| agent_config.clone());
     }
     config
@@ -339,18 +437,51 @@ pub fn init_hub(dry_run: bool) -> Result<HubConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn fills_new_agents_into_existing_config() {
         let fallback = default_config();
         let mut existing = fallback.clone();
-        existing.agents.remove(&AgentKind::Claude);
+        existing.agents.remove(&AgentKind::claude());
 
         let config = fill_missing_default_agents(existing, &fallback);
 
-        assert!(config.agents.contains_key(&AgentKind::Claude));
-        assert!(config.agents[&AgentKind::Claude]
+        assert!(config.agents.contains_key(&AgentKind::claude()));
+        assert!(config.agents[&AgentKind::claude()]
             .skills_dir
             .ends_with(".claude/skills"));
+    }
+
+    #[test]
+    fn keeps_explicitly_removed_default_agent_removed() {
+        let fallback = default_config();
+        let mut existing = fallback.clone();
+        existing.agents.remove(&AgentKind::claude());
+        existing.removed_agents.insert(AgentKind::claude());
+
+        let config = fill_missing_default_agents(existing, &fallback);
+
+        assert!(!config.agents.contains_key(&AgentKind::claude()));
+    }
+
+    #[test]
+    fn removes_only_selected_agent_lock_records() {
+        let record = |agent: AgentKind| ManagedLinkRecord {
+            agent,
+            skill_name: "demo".into(),
+            link_path: PathBuf::from("/tmp/agent/demo"),
+            target_path: PathBuf::from("/tmp/hub/demo"),
+            updated_at: String::new(),
+        };
+        let mut lock = HubLock {
+            version: 1,
+            managed_links: vec![record(AgentKind::codex()), record(AgentKind::claude())],
+            migrations: Vec::new(),
+        };
+
+        assert!(remove_agent_lock_records(&mut lock, &AgentKind::codex()));
+        assert_eq!(lock.managed_links.len(), 1);
+        assert_eq!(lock.managed_links[0].agent, AgentKind::claude());
     }
 }

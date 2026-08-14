@@ -36,9 +36,9 @@ fn scans_nested_skills() {
 fn claude_agent_uses_default_skills_dir() {
     let config = default_config();
 
-    assert_eq!(AgentKind::parse("claude"), Some(AgentKind::Claude));
-    assert_eq!(AgentKind::Claude.as_str(), "claude");
-    assert!(config.agents[&AgentKind::Claude]
+    assert_eq!(AgentKind::parse("claude"), Some(AgentKind::claude()));
+    assert_eq!(AgentKind::claude().as_str(), "claude");
+    assert!(config.agents[&AgentKind::claude()]
         .skills_dir
         .ends_with(".claude/skills"));
 }
@@ -57,7 +57,7 @@ fn takeover_and_remove_hub_skill_cleans_managed_agent() {
     )
     .unwrap();
 
-    let cursor_skill = config.agents[&AgentKind::Cursor].skills_dir.join("demo");
+    let cursor_skill = config.agents[&AgentKind::cursor()].skills_dir.join("demo");
     fs::create_dir_all(&cursor_skill).unwrap();
     fs::write(
         cursor_skill.join("SKILL.md"),
@@ -65,7 +65,8 @@ fn takeover_and_remove_hub_skill_cleans_managed_agent() {
     )
     .unwrap();
 
-    let result = takeover_agent_skill("demo", AgentKind::Cursor, false, SyncMethod::Auto).unwrap();
+    let result =
+        takeover_agent_skill("demo", AgentKind::cursor(), false, SyncMethod::Auto).unwrap();
 
     assert!(result.backup_path.join("SKILL.md").exists());
     assert!(cursor_skill.exists() || cursor_skill.symlink_metadata().is_ok());
@@ -82,7 +83,7 @@ fn takeover_and_remove_hub_skill_cleans_managed_agent() {
     let cursor = demo
         .agents
         .iter()
-        .find(|status| status.agent == AgentKind::Cursor)
+        .find(|status| status.agent == AgentKind::cursor())
         .unwrap();
     assert!(matches!(
         cursor.status,
@@ -97,8 +98,11 @@ fn takeover_and_remove_hub_skill_cleans_managed_agent() {
     assert!(!hub_skill.exists());
     assert!(!cursor_skill.exists());
     assert!(cursor_skill.symlink_metadata().is_err());
-    assert!(removed
-        .agents
-        .iter()
-        .any(|result| result.agent == AgentKind::Cursor && result.status == LinkStatus::Unlinked));
+    assert!(
+        removed
+            .agents
+            .iter()
+            .any(|result| result.agent == AgentKind::cursor()
+                && result.status == LinkStatus::Unlinked)
+    );
 }
