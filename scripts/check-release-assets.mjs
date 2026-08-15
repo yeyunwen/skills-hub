@@ -16,7 +16,7 @@ if (!tag || !tagPattern.test(tag)) {
 
 const version = tag.slice(1);
 // Keep this exact inventory aligned with release.yml's CLI targets and
-// tauri-action releaseAssetNamePattern. Extra files fail intentionally.
+// prepare-release-assets.mjs. Extra files fail intentionally.
 const expected = [
   `skh-${tag}-aarch64-apple-darwin.tar.gz`,
   `skh-${tag}-x86_64-apple-darwin.tar.gz`,
