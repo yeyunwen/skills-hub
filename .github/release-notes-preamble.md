@@ -1,3 +1,4 @@
+<!-- skills-hub-release-preamble:start -->
 ## Downloads
 
 - **macOS Apple Silicon:** the `darwin-aarch64-unsigned.dmg` asset
@@ -25,3 +26,4 @@ gh attestation verify <downloaded-file> --repo yeyunwen/skills-hub
 ```
 
 On Windows, compare `Get-FileHash <downloaded-file> -Algorithm SHA256` with the corresponding entry in `SHA256SUMS`.
+<!-- skills-hub-release-preamble:end -->

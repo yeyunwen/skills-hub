@@ -64,6 +64,7 @@ replaceOnce(
 updateJson('package.json');
 updateJson('apps/desktop/package.json');
 updateJson('apps/desktop/src-tauri/tauri.conf.json');
+updates.set('version.txt', `${requestedVersion}\n`);
 updateCargoLockPackage('skh-cli');
 updateCargoLockPackage('skills-hub-core');
 updateCargoLockPackage('skills-hub-desktop');

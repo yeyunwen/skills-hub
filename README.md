@@ -75,7 +75,7 @@ pnpm install --frozen-lockfile
 pnpm desktop:check
 ```
 
-维护者发布版本时请遵循 [RELEASING.md](RELEASING.md) 中的两阶段流程，不要直接移动已有 Tag 或替换已发布资产。
+维护者发布版本时请遵循 [RELEASING.md](RELEASING.md)：Release Please 会自动维护版本 PR，合并后自动创建 Draft、构建和验证产物；不要直接移动已有 Tag 或替换已发布资产。
 
 ## CLI 示例
 

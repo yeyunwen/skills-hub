@@ -53,6 +53,7 @@ function cargoLockVersion(packageName) {
 }
 
 const versions = new Map([
+  ['version.txt', readFileSync(resolve(root, 'version.txt'), 'utf8').trim()],
   ['Cargo workspace', workspaceVersion()],
   ['root package.json', readJson('package.json').version],
   ['desktop package.json', readJson('apps/desktop/package.json').version],

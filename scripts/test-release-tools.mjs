@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -75,6 +80,24 @@ try {
     [fixture, tag, '--with-checksums'],
     { succeeds: false },
   );
+
+  const currentNotes = join(fixture, 'current-notes.md');
+  const renderedNotes = join(fixture, 'rendered-notes.md');
+  writeFileSync(currentNotes, '## Changes\n\n- Added release automation.\n');
+  runScript('scripts/render-release-notes.mjs', [
+    currentNotes,
+    renderedNotes,
+  ]);
+  runScript('scripts/render-release-notes.mjs', [
+    renderedNotes,
+    renderedNotes,
+  ]);
+  const notes = readFileSync(renderedNotes, 'utf8');
+  assert.equal(
+    notes.match(/skills-hub-release-preamble:start/g)?.length,
+    1,
+  );
+  assert.match(notes, /## Changes/);
 } finally {
   rmSync(fixture, { recursive: true, force: true });
 }
