@@ -29,6 +29,9 @@ jobs:
     name: Validate release
     runs-on: ubuntu-22.04
     timeout-minutes: 10
+    permissions:
+      # GitHub only exposes draft releases to tokens with push access.
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -224,7 +227,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       attestations: read
-      contents: read
+      # Draft release downloads require the same push-level visibility.
+      contents: write
     outputs:
       release_url: ${{ steps.release.outputs.url }}
     steps:

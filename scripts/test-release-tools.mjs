@@ -26,6 +26,28 @@ for (const workflow of [
   );
 }
 
+const releaseWorkflow = readFileSync(
+  resolve(root, '.github/workflows/release.yml'),
+  'utf8',
+);
+
+function workflowJob(source, name) {
+  const marker = `\n  ${name}:\n`;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `release workflow must define the ${name} job`);
+  const remaining = source.slice(start + marker.length);
+  const nextJob = remaining.search(/\n  [a-zA-Z0-9_-]+:\n/);
+  return nextJob === -1 ? remaining : remaining.slice(0, nextJob);
+}
+
+for (const job of ['validate', 'verify']) {
+  assert.match(
+    workflowJob(releaseWorkflow, job),
+    /^    permissions:\n(?:      .*\n)*?      contents: write\s*$/m,
+    `${job} must have push-level visibility for the draft release`,
+  );
+}
+
 function runScript(script, args, { input = '', succeeds = true } = {}) {
   const result = spawnSync(process.execPath, [resolve(root, script), ...args], {
     cwd: root,
