@@ -42,6 +42,27 @@ function workflowJob(source, name) {
   return nextJob === -1 ? remaining : remaining.slice(0, nextJob);
 }
 
+for (const job of ['validate', 'cli', 'desktop']) {
+  assert.match(
+    workflowJob(releaseWorkflow, job),
+    /^          ref: \$\{\{ env\.RELEASE_TAG \}\}\s*$/m,
+    `${job} must build and validate the immutable release tag`,
+  );
+}
+
+for (const job of ['release', 'verify']) {
+  assert.match(
+    workflowJob(releaseWorkflow, job),
+    /^          ref: \$\{\{ github\.sha \}\}\s*$/m,
+    `${job} must use tooling from the dispatched workflow revision`,
+  );
+  assert.doesNotMatch(
+    workflowJob(releaseWorkflow, job),
+    /^          ref: \$\{\{ env\.RELEASE_TAG \}\}\s*$/m,
+    `${job} must not load release tooling from an older tag`,
+  );
+}
+
 for (const job of ['validate', 'verify']) {
   assert.match(
     workflowJob(releaseWorkflow, job),
