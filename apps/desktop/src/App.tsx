@@ -2,6 +2,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { memo, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isTauri } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ChevronRight,
@@ -21,6 +22,7 @@ import {
   Save,
   Sun,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -30,6 +32,7 @@ import {
   type HubConfig,
   type EnvironmentSnapshot,
   type EnvironmentSummary,
+  type SkillImportPreview,
   type SkillSource,
   type SyncMethod,
 } from "@/lib/api";
@@ -153,6 +156,7 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   const [agentFilter, setAgentFilter] = useState<AgentKind | "all">("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const snapshot = useEnvironmentSnapshot(environment.id);
@@ -280,6 +284,7 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   }
 
   const capabilitiesReady = environment.kind === "local" || (snapshot.data.capabilities.ssh && snapshot.data.capabilities.python3);
+  const canImport = environment.kind === "local" || (capabilitiesReady && snapshot.data.capabilities.rsync);
   return (
     <PageShell
       title="技能"
@@ -288,6 +293,14 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
       transitioning={snapshot.isPlaceholderData}
       actions={
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => setImportOpen(true)}
+            disabled={!canImport}
+            title={canImport ? "从文件夹或 ZIP 添加 Skill" : "SSH 环境需要 Python3 和 rsync 才能接收本机 Skill"}
+          >
+            <Plus className="h-3.5 w-3.5" /> 添加 Skill
+          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -416,6 +429,13 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
         )}
       </AnimatePresence>
       <TransferDialog open={transferOpen} onOpenChange={setTransferOpen} source={environment} environments={environments} />
+      <ImportSkillDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        environment={environment}
+        agents={agents}
+        agentLabels={agentLabels}
+      />
     </PageShell>
   );
 }
@@ -657,6 +677,269 @@ function TransferDialog({
             )}
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+async function chooseSkillImportFolder() {
+  if (!isTauri()) {
+    return "/mock/shared-skills";
+  }
+  const selected = await openDialog({
+    title: "选择 Skill 文件夹",
+    directory: true,
+    multiple: false,
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+function ImportSkillDialog({
+  open,
+  onOpenChange,
+  environment,
+  agents,
+  agentLabels,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  environment: EnvironmentSummary;
+  agents: AgentKind[];
+  agentLabels: Record<string, string>;
+}) {
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
+  const [preview, setPreview] = useState<SkillImportPreview | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [selectedAgents, setSelectedAgents] = useState<AgentKind[]>([]);
+
+  const previewMutation = useMutation({
+    mutationFn: (sourcePath: string) => api.previewEnvironmentImport({ environmentId: environment.id, sourcePath }),
+    onSuccess: (result) => {
+      setPreview(result);
+      setSelected(result.skills.filter((skill) => skill.status !== "invalid").map((skill) => skill.id));
+    },
+    onError: (error) => showToast({ tone: "error", title: "无法读取导入内容", description: getErrorMessage(error) }),
+  });
+  const importMutation = useMutation({
+    mutationFn: async (force: boolean) => {
+      const result = await api.importEnvironmentSkills({
+        environmentId: environment.id,
+        sourcePath: preview?.sourcePath ?? "",
+        skillIds: selected,
+        force,
+      });
+      const imported = result.items.filter((item) => item.status === "imported");
+      const syncResults = selectedAgents.length
+        ? await Promise.allSettled(imported.map((item) => api.linkEnvironmentSkill({
+            environmentId: environment.id,
+            skillName: item.skillName,
+            tools: selectedAgents,
+          })))
+        : [];
+      return {
+        result,
+        syncFailures: syncResults.filter((item) => item.status === "rejected").length,
+      };
+    },
+    onSuccess: async ({ result, syncFailures }) => {
+      const imported = result.items.filter((item) => item.status === "imported").length;
+      const conflicts = result.items.filter((item) => item.status === "conflict").length;
+      const hasWarnings = conflicts > 0 || syncFailures > 0;
+      const syncDescription = selectedAgents.length
+        ? syncFailures
+          ? `；${syncFailures} 个 Skill 未能完成 Agent 同步`
+          : `，并同步到 ${selectedAgents.length} 个 Agent`
+        : "";
+      showToast({
+        tone: hasWarnings ? "error" : "success",
+        title: syncFailures ? "Skill 已添加，同步未全部完成" : conflicts ? "Skill 已添加，部分同名项被跳过" : "Skill 添加完成",
+        description: `已添加 ${imported} 个${conflicts ? `，跳过 ${conflicts} 个同名 Skill` : ""}${syncDescription}。`,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] });
+      onOpenChange(false);
+    },
+    onError: (error) => showToast({ tone: "error", title: "Skill 添加失败", description: getErrorMessage(error) }),
+  });
+
+  useEffect(() => {
+    if (open) return;
+    setPreview(null);
+    setSelected([]);
+    setPicking(false);
+    setDragActive(false);
+    setSelectedAgents([]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !isTauri()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow().onDragDropEvent((event) => {
+      if (event.payload.type === "over") {
+        setDragActive(true);
+        return;
+      }
+      setDragActive(false);
+      if (event.payload.type !== "drop") return;
+      if (event.payload.paths.length !== 1) {
+        showToast({ tone: "error", title: "请一次拖入一个文件夹或 ZIP" });
+        return;
+      }
+      previewMutation.mutate(event.payload.paths[0]);
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [open]);
+
+  const pickSource = async () => {
+    setPicking(true);
+    try {
+      const sourcePath = await chooseSkillImportFolder();
+      if (sourcePath) previewMutation.mutate(sourcePath);
+    } catch (error) {
+      showToast({ tone: "error", title: "无法打开文件选择器", description: getErrorMessage(error) });
+    } finally {
+      setPicking(false);
+    }
+  };
+  const selectable = preview?.skills.filter((skill) => skill.status !== "invalid") ?? [];
+  const selectedCandidates = selectable.filter((skill) => selected.includes(skill.id));
+  const selectedConflicts = selectedCandidates.filter((skill) => skill.status === "conflict").length;
+  const toggleSkill = (skillId: string) => {
+    setSelected((current) => current.includes(skillId) ? current.filter((item) => item !== skillId) : [...current, skillId]);
+  };
+  const toggleAgent = (agent: AgentKind) => {
+    setSelectedAgents((current) => current.includes(agent) ? current.filter((item) => item !== agent) : [...current, agent]);
+  };
+  const resetSource = () => {
+    setPreview(null);
+    setSelected([]);
+    previewMutation.reset();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="import-skill-dialog">
+        <DialogHeader>
+          <DialogTitle>添加 Skill</DialogTitle>
+          <DialogDescription>从本机文件夹或 ZIP 添加到“{environment.name}”的 Hub；添加后可再选择同步到 Agent。</DialogDescription>
+        </DialogHeader>
+        {!preview && !previewMutation.isPending && (
+          <button className={cn("import-dropzone", dragActive && "import-dropzone-active")} onClick={() => void pickSource()} disabled={picking}>
+            <span className="import-dropzone-icon">
+              {picking ? <Loader2 className="h-6 w-6 animate-spin" /> : dragActive ? <Upload className="h-6 w-6" /> : <FolderOpen className="h-6 w-6" />}
+            </span>
+            <strong>{dragActive ? "松开即可扫描" : "拖入 Skill 文件夹或 ZIP"}</strong>
+            <span className="import-dropzone-description">也可以点击这里选择文件夹，系统会自动扫描其中的 Skill</span>
+          </button>
+        )}
+        {previewMutation.isPending && <PageLoading compact label="正在安全扫描 Skill…" />}
+        {preview && (
+          <div className="import-preview">
+            <div className="import-preview-toolbar">
+              <div className="min-w-0">
+                <div className="section-title">发现 {preview.skills.length} 个 Skill</div>
+                <div className="section-caption truncate" title={preview.sourcePath}>{preview.sourcePath}</div>
+              </div>
+              <Button variant="secondary" size="sm" onClick={resetSource} disabled={importMutation.isPending}>重新选择</Button>
+            </div>
+            <div className="import-preview-body">
+              <div className="import-skill-list">
+                {preview.skills.map((skill) => {
+                  const disabled = skill.status === "invalid";
+                  const checked = selected.includes(skill.id);
+                  return (
+                    <label key={skill.id} className={cn("import-skill-row", disabled && "import-skill-row-disabled")}>
+                      <input type="checkbox" checked={checked} disabled={disabled || importMutation.isPending} onChange={() => toggleSkill(skill.id)} />
+                      <div className="import-skill-copy">
+                        <div className="source-name">{skill.name}</div>
+                        <div className="source-scan-description">{skill.description || "暂无描述"}</div>
+                        <div className="muted-path" title={skill.relativePath}>{skill.relativePath}</div>
+                        {skill.reason && <div className="import-skill-reason">{skill.reason}</div>}
+                      </div>
+                      <Badge>{skill.status === "ready" ? "可添加" : skill.status === "conflict" ? "已存在" : "无效"}</Badge>
+                    </label>
+                  );
+                })}
+              </div>
+              <aside className="import-agent-panel">
+                <div className="section-title">添加后同步到</div>
+                <div className="section-caption">不选择则只添加到 Hub</div>
+                <div className="import-agent-grid">
+                  {agents.map((agent) => {
+                    const active = selectedAgents.includes(agent);
+                    return (
+                      <button
+                        key={agent}
+                        type="button"
+                        className={cn("import-agent-option", active && "import-agent-option-active")}
+                        aria-pressed={active}
+                        title={agentLabels[agent]}
+                        disabled={importMutation.isPending}
+                        onClick={() => toggleAgent(agent)}
+                      >
+                        <AgentIcon agent={agent} size={18} />
+                        <span>{agentLabels[agent]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </aside>
+            </div>
+            {selectedConflicts > 0 && (
+              <div className="import-conflict-note">
+                <CircleAlert className="h-4 w-4 shrink-0" />
+                已选择 {selectedConflicts} 个同名 Skill。默认会跳过；选择覆盖时会先备份当前版本。
+              </div>
+            )}
+            <div className="import-dialog-actions">
+              <div className="section-caption">
+                已选择 {selectedCandidates.length} 个 Skill{selectedAgents.length ? ` · ${selectedAgents.length} 个 Agent` : ""}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={importMutation.isPending}>取消</Button>
+                {selectedConflicts > 0 ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      pending={importMutation.isPending && importMutation.variables === false}
+                      pendingLabel="添加中"
+                      disabled={!selected.length || importMutation.isPending}
+                      onClick={() => importMutation.mutate(false)}
+                    >
+                      {selectedAgents.length ? "添加新增并同步" : "仅添加新增"}
+                    </Button>
+                    <Button
+                      pending={importMutation.isPending && importMutation.variables === true}
+                      pendingLabel="覆盖中"
+                      disabled={!selected.length || importMutation.isPending}
+                      onClick={() => importMutation.mutate(true)}
+                    >
+                      {selectedAgents.length ? "覆盖、添加并同步" : "覆盖并备份"}
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    pending={importMutation.isPending}
+                    pendingLabel="添加中"
+                    disabled={!selected.length || importMutation.isPending}
+                    onClick={() => importMutation.mutate(false)}
+                  >
+                    {selectedAgents.length ? `添加并同步到 ${selectedAgents.length} 个 Agent` : `添加 ${selected.length} 个 Skill`}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -1,5 +1,5 @@
-import { ClaudeCode, Cloudflare, Codex, Cursor, Github, HermesAgent, OpenClaw, Qoder, Trae, Windsurf } from "@lobehub/icons";
-import { Bot, Cloud, GitBranch } from "lucide-react";
+import { ClaudeCode, Codex, Cursor, Github, HermesAgent, OpenClaw, Qoder, Trae, Windsurf } from "@lobehub/icons";
+import { Bot, Cloud, GitBranch, Globe } from "lucide-react";
 import gitlabIcon from "@/assets/icons/gitlab.svg";
 import type { AgentKind } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -46,7 +46,7 @@ export function AgentIcon({ agent, className, size = 14 }: { agent: AgentKind; c
 }
 
 export function RemoteIcon({ className, size = 16 }: { className?: string; size?: number }) {
-  return <LobeMark Icon={Cloudflare.Color ?? Cloudflare.Avatar ?? Cloudflare} size={size} className={className} />;
+  return <Globe size={size} className={cn("shrink-0", className)} aria-hidden="true" />;
 }
 
 export function StatusDot({ tone, spinning = false }: { tone: "success" | "danger" | "muted" | "info"; spinning?: boolean }) {

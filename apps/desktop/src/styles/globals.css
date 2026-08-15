@@ -795,6 +795,102 @@
     @apply mt-0.5 line-clamp-2 break-words text-xs leading-5 text-muted-foreground;
   }
 
+  .import-skill-dialog {
+    @apply w-[min(94vw,860px)];
+  }
+
+  .import-dropzone {
+    @apply flex min-h-52 w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-[hsl(var(--surface-subtle)/0.4)] px-6 py-8 text-center hover:border-[hsl(var(--accent)/0.55)] hover:bg-[hsl(var(--surface-hover)/0.48)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-55;
+    transition: background-color 140ms ease, border-color 140ms ease, transform 100ms var(--ease-out);
+  }
+
+  .import-dropzone:active {
+    transform: scale(0.995);
+  }
+
+  .import-dropzone-active {
+    @apply border-[hsl(var(--accent))] bg-[hsl(var(--accent)/0.08)];
+  }
+
+  .import-dropzone-icon {
+    @apply mb-1 flex h-12 w-12 items-center justify-center rounded-xl bg-[hsl(var(--accent)/0.11)] text-[hsl(var(--accent))];
+  }
+
+  .import-dropzone strong {
+    @apply text-sm font-medium;
+  }
+
+  .import-dropzone-description {
+    @apply max-w-md text-xs leading-5 text-muted-foreground;
+  }
+
+  .import-preview {
+    @apply overflow-hidden rounded-lg border border-border;
+  }
+
+  .import-preview-toolbar {
+    @apply flex min-h-16 items-center justify-between gap-3 border-b border-border bg-[hsl(var(--surface-subtle)/0.42)] px-4 py-3;
+  }
+
+  .import-skill-list {
+    @apply max-h-[min(44vh,420px)] divide-y divide-border overflow-y-auto;
+  }
+
+  .import-preview-body {
+    @apply grid min-w-0;
+    grid-template-columns: minmax(0, 1fr) 220px;
+  }
+
+  .import-skill-row {
+    @apply grid min-w-0 cursor-pointer items-center gap-3 px-4 py-3;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .import-skill-row:hover {
+    @apply bg-[hsl(var(--surface-hover)/0.42)];
+  }
+
+  .import-skill-row-disabled {
+    @apply cursor-not-allowed opacity-55;
+  }
+
+  .import-skill-copy {
+    @apply min-w-0;
+  }
+
+  .import-skill-reason {
+    @apply mt-1 text-[11px] leading-4 text-destructive;
+  }
+
+  .import-agent-panel {
+    @apply border-l border-border bg-[hsl(var(--surface-subtle)/0.34)] p-4;
+  }
+
+  .import-agent-grid {
+    @apply mt-3 grid grid-cols-3 gap-2;
+  }
+
+  .import-agent-option {
+    @apply flex min-w-0 flex-col items-center gap-1.5 rounded-md border border-transparent px-1 py-2 text-[10px] text-muted-foreground hover:bg-[hsl(var(--surface-hover)/0.62)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50;
+    transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+  }
+
+  .import-agent-option span {
+    @apply w-full truncate text-center;
+  }
+
+  .import-agent-option-active {
+    @apply border-[hsl(var(--accent)/0.35)] bg-[hsl(var(--accent)/0.1)] text-foreground;
+  }
+
+  .import-conflict-note {
+    @apply flex items-start gap-2 border-t border-border bg-[hsl(var(--destructive)/0.07)] px-4 py-3 text-xs leading-5 text-foreground;
+  }
+
+  .import-dialog-actions {
+    @apply flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3;
+  }
+
   .settings-layout {
     @apply mx-auto grid w-full max-w-[920px] gap-4 pb-2;
   }
@@ -1013,15 +1109,11 @@
   }
 
   .dialog-content {
-    @apply fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-32px)] w-[min(92vw,640px)] overflow-y-auto rounded-lg border border-border p-5 text-card-foreground outline-none;
-    background: hsl(var(--glass) / 0.9);
-    backdrop-filter: blur(36px) saturate(160%);
-    -webkit-backdrop-filter: blur(36px) saturate(160%);
+    @apply fixed inset-0 z-50 m-auto h-fit max-h-[calc(100dvh-32px)] w-[min(92vw,640px)] overflow-y-auto rounded-lg border border-border p-5 text-card-foreground outline-none;
+    background: hsl(var(--card));
     box-shadow:
       inset 0 1px 0 hsl(var(--glass-edge) / 0.28),
       0 28px 72px hsl(var(--shadow-color) / 0.28);
-    transform: translate(-50%, -50%);
-    transform-origin: center;
   }
 
   .dialog-overlay[data-state="open"] {
@@ -1033,11 +1125,11 @@
   }
 
   .dialog-content[data-state="open"] {
-    animation: dialog-content-in 200ms var(--ease-out);
+    animation: dialog-content-in 160ms var(--ease-out);
   }
 
   .dialog-content[data-state="closed"] {
-    animation: dialog-content-out 140ms var(--ease-out);
+    animation: dialog-content-out 120ms var(--ease-out);
   }
 
   .dialog-close,
@@ -1121,25 +1213,13 @@
 }
 
 @keyframes dialog-content-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes dialog-content-out {
-  from {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.98);
-  }
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 @layer utilities {
@@ -1246,6 +1326,18 @@
       flex-basis: 100%;
     }
 
+    .import-preview-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .import-agent-panel {
+      @apply border-l-0 border-t border-border;
+    }
+
+    .import-agent-grid {
+      @apply grid-cols-5;
+    }
+
     .agent-config-row {
       grid-template-columns: minmax(0, 1fr) auto;
     }
@@ -1339,14 +1431,6 @@
       animation-duration: 120ms !important;
     }
 
-    .dialog-content[data-state="open"] {
-      animation-name: dialog-content-fade-in;
-    }
-
-    .dialog-content[data-state="closed"] {
-      animation-name: dialog-content-fade-out;
-    }
-
     .ui-button:active:not(:disabled),
     .icon-button:active:not(:disabled),
     .search-clear:active,
@@ -1414,17 +1498,7 @@
   }
 }
 
-@keyframes dialog-content-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 @keyframes page-fade-in {
   from { opacity: 0.96; }
   to { opacity: 1; }
-}
-
-@keyframes dialog-content-fade-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
 }

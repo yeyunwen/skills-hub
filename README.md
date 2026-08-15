@@ -37,6 +37,7 @@ skh --help
 
 - 本机 Hub 默认使用 `~/.agents/skills`，可以在设置中自定义；SSH Hub 当前固定使用该路径
 - 支持 GitHub / GitLab / generic Git / SSH Git / 本地目录
+- 桌面端可拖入本机文件夹或 ZIP，预览并选择性添加 Skill，覆盖前自动备份
 - 先扫描 source 中有多少 skill，再选择性安装
 - 本机 agent 默认通过 symlink 分发
 - SSH 环境通过系统 SSH、rsync 和远端 helper 管理

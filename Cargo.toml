@@ -27,5 +27,6 @@ tempfile = "3.14"
 thiserror = "2.0"
 walkdir = "2.5"
 which = "7.0"
+zip = { version = "8.4", default-features = false, features = ["bzip2", "deflate", "deflate64"] }
 tauri = { version = "2.9", features = [] }
 tauri-build = { version = "2.5", features = [] }
