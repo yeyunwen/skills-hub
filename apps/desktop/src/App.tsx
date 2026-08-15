@@ -544,30 +544,50 @@ function SkillDrawer({
   agentLabels: Record<string, string>;
 }) {
   const [trashOpen, setTrashOpen] = useState(false);
+  const headerRef = useRef<HTMLDivElement>(null);
   const skill = snapshot.hub.find((item) => (item.dirName ?? item.dir_name ?? item.name) === row.name);
   return (
     <>
       <DetailDrawer open onOpenChange={(open) => { if (!open) onClose(); }}>
-        <DetailDrawerContent>
-          <div className="drawer-header">
+        <DetailDrawerContent
+          className="skill-detail-drawer"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            headerRef.current?.focus();
+          }}
+        >
+          <div ref={headerRef} className="drawer-header" tabIndex={-1}>
             <div className="min-w-0">
               <div className="drawer-kicker">SKILL</div>
               <DetailDrawerTitle>{row.displayName}</DetailDrawerTitle>
               <DetailDrawerDescription>{skill?.path ?? row.path}</DetailDrawerDescription>
             </div>
-            <DetailDrawerCloseButton />
+            <div className="drawer-header-actions">
+              <button
+                type="button"
+                className="icon-button skill-trash-trigger"
+                aria-label={`将 ${row.displayName} 移入回收站`}
+                title="移入回收站"
+                disabled={trashing}
+                onClick={() => setTrashOpen(true)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+              <DetailDrawerCloseButton />
+            </div>
           </div>
           <div className="drawer-body">
-            <p className="text-sm leading-6 text-muted-foreground">{row.description || "暂无描述"}</p>
+            <p className="skill-drawer-description">{row.description || "暂无描述"}</p>
             <div className="drawer-section">
               <div className="drawer-section-title">Agent 状态</div>
               <div className="drawer-status-list">
                 {agents.map((agent) => {
                   const status = agentStatus(row, agent);
+                  const synced = status === "linked" || status === "copied";
                   return (
                     <button key={agent} className="drawer-status-row" onClick={() => onAgentAction(agent, status)}>
                       <span className="flex items-center gap-2"><AgentIcon agent={agent} size={15} /> {agentLabels[agent]}</span>
-                      <span className={cn("status-text", status === "conflict" && "status-text-danger")}>{status === "conflict" ? "备份并接管" : statusLabels[status] ?? status}</span>
+                      <span className={cn("status-text", synced && "status-text-success", status === "conflict" && "status-text-danger")}>{status === "conflict" ? "备份并接管" : statusLabels[status] ?? status}</span>
                     </button>
                   );
                 })}
@@ -579,11 +599,6 @@ function SkillDrawer({
                 <FolderOpen className="h-4 w-4" /> <span className="truncate">{skill?.path ?? row.path}</span> <ExternalLink className="ml-auto h-3.5 w-3.5" />
               </button>
             </div>
-            <div className="drawer-section drawer-danger-section">
-              <div className="drawer-section-title">移除 Skill</div>
-              <p className="mb-3 text-xs leading-5 text-muted-foreground">从当前环境移除，但不物理删除；内容会保存在 skills-hub 回收区中。</p>
-              <Button variant="destructive" size="sm" onClick={() => setTrashOpen(true)}><Trash2 className="h-3.5 w-3.5" /> 移入回收站</Button>
-            </div>
           </div>
         </DetailDrawerContent>
       </DetailDrawer>
@@ -594,8 +609,8 @@ function SkillDrawer({
             <DialogDescription>会取消可安全识别的 Agent 同步关系，并把 Hub 中的 Skill 移到当前环境的备份回收区。未受管的冲突目录不会被删除，可从“设置 → 备份与回收站”中找回。</DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setTrashOpen(false)}>取消</Button>
-            <Button variant="destructive" pending={trashing} pendingLabel="正在移除" onClick={onTrash}>移入回收站</Button>
+            <Button variant="secondary" size="sm" onClick={() => setTrashOpen(false)}>取消</Button>
+            <Button variant="destructive" size="sm" pending={trashing} pendingLabel="正在移除" onClick={onTrash}>移入回收站</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -965,6 +980,7 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   const snapshot = useEnvironmentSnapshot(environment.id);
   const [addOpen, setAddOpen] = useState(false);
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
+  const [sourceToRemove, setSourceToRemove] = useState<SkillSource | null>(null);
   const sources = snapshot.data?.sources ?? [];
   const agents = useMemo(() => snapshot.data?.agents.map((item) => item.agent) ?? [], [snapshot.data?.agents]);
   const agentLabels = useMemo(
@@ -985,21 +1001,31 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   });
   const removeSource = useMutation({
     mutationFn: (sourceRef: string) => api.removeEnvironmentSource({ environmentId: environment.id, sourceRef }),
-    onSuccess: async () => {
+    onSuccess: async (_, sourceRef) => {
+      const removedIndex = sources.findIndex((source) => source.id === sourceRef);
+      const focusSource = sources[removedIndex + 1] ?? sources[removedIndex - 1];
       showToast({ tone: "success", title: "来源已移除" });
-      setSelectedSource(null);
-      requestAnimationFrame(() => document.getElementById("add-source-button")?.focus());
+      if (selectedSource === sourceRef) setSelectedSource(null);
+      setSourceToRemove(null);
       await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] });
+      if (focusSource) restoreFocusToItem("data-source-id", focusSource.id);
+      else requestAnimationFrame(() => document.getElementById("add-source-button")?.focus());
     },
     onError: (error) => showToast({ tone: "error", title: "来源移除失败", description: getErrorMessage(error) }),
   });
   useEffect(() => {
     setSelectedSource(null);
+    setSourceToRemove(null);
   }, [environment.id]);
   const closeSourceDrawer = () => {
     const sourceId = selectedSource;
     setSelectedSource(null);
     if (sourceId) restoreFocusToItem("data-source-id", sourceId);
+  };
+  const closeRemoveDialog = () => {
+    const sourceId = sourceToRemove?.id;
+    setSourceToRemove(null);
+    if (sourceId) restoreFocusToItem("data-source-remove-id", sourceId);
   };
   const selectedSourceData = sources.find((source) => source.id === selectedSource) ?? null;
   const sourceActions = (
@@ -1046,28 +1072,43 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
             {sources.map((source) => {
               const selected = selectedSource === source.id;
               return (
-                <motion.button
-                  type="button"
+                <motion.div
                   key={source.id}
                   initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(4px)" }}
                   animate={{ opacity: 1, transform: "translateY(0px)" }}
                   exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-4px)" }}
                   transition={{ duration: reduceMotion ? 0.1 : 0.16, ease: [0.23, 1, 0.32, 1] }}
                   className={cn("source-row", selected && "source-row-selected")}
-                  aria-haspopup="dialog"
-                  data-source-id={source.id}
-                  onClick={() => setSelectedSource(source.id)}
                 >
-                  <span className="source-kind-icon"><SourceIcon kind={source.kind} /></span>
-                  <span className="source-copy">
-                    <span className="source-name" title={source.id}>{source.id}</span>
-                    <span className="muted-path" title={source.url}>{source.url}</span>
-                  </span>
-                  <span className="source-row-trailing">
-                    <Badge>{sourceKindLabel(source.kind)}</Badge>
-                    <ChevronRight className="h-4 w-4" />
-                  </span>
-                </motion.button>
+                  <button
+                    type="button"
+                    className="source-row-open"
+                    aria-haspopup="dialog"
+                    data-source-id={source.id}
+                    onClick={() => setSelectedSource(source.id)}
+                  >
+                    <span className="source-kind-icon"><SourceIcon kind={source.kind} /></span>
+                    <span className="source-copy">
+                      <span className="source-name" title={source.id}>{source.id}</span>
+                      <span className="muted-path" title={source.url}>{source.url}</span>
+                    </span>
+                    <span className="source-row-trailing">
+                      <Badge>{sourceKindLabel(source.kind)}</Badge>
+                      <ChevronRight className="h-4 w-4" />
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="source-row-remove"
+                    aria-label={`移除来源 ${source.id}`}
+                    title="移除来源"
+                    data-source-remove-id={source.id}
+                    disabled={removeSource.isPending}
+                    onClick={() => setSourceToRemove(source)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </motion.div>
               );
             })}
           </AnimatePresence>
@@ -1085,9 +1126,7 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
           source={selectedSourceData}
           agents={agents}
           agentLabels={agentLabels}
-          removing={removeSource.isPending && removeSource.variables === selectedSourceData.id}
           onClose={closeSourceDrawer}
-          onRemove={() => removeSource.mutate(selectedSourceData.id)}
         />
       )}
       {canManageSources && (
@@ -1095,6 +1134,34 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
           <DialogContent>
             <DialogHeader><DialogTitle>添加安装来源</DialogTitle><DialogDescription>来源配置绑定当前环境：{environment.name}。</DialogDescription></DialogHeader>
             <SourceForm loading={addSource.isPending} onSubmit={(input) => addSource.mutate(input)} />
+          </DialogContent>
+        </Dialog>
+      )}
+      {canManageSources && (
+        <Dialog
+          open={Boolean(sourceToRemove)}
+          onOpenChange={(open) => {
+            if (!open && !removeSource.isPending) closeRemoveDialog();
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>移除来源 {sourceToRemove?.id}？</DialogTitle>
+              <DialogDescription>只会移除来源配置；已经安装到当前 Hub 的 Skill 会继续保留。</DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" size="sm" disabled={removeSource.isPending} onClick={closeRemoveDialog}>取消</Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                pending={removeSource.isPending}
+                pendingLabel="移除中"
+                disabled={!sourceToRemove}
+                onClick={() => sourceToRemove && removeSource.mutate(sourceToRemove.id)}
+              >
+                移除来源
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
       )}
@@ -1107,22 +1174,17 @@ function SourceDrawer({
   source,
   agents,
   agentLabels,
-  removing,
   onClose,
-  onRemove,
 }: {
   environmentId: string;
   source: SkillSource;
   agents: AgentKind[];
   agentLabels: Record<string, string>;
-  removing: boolean;
   onClose: () => void;
-  onRemove: () => void;
 }) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const reduceMotion = useReducedMotion();
-  const [removeOpen, setRemoveOpen] = useState(false);
   const [selectedAgents, setSelectedAgents] = useState<AgentKind[]>([]);
   const autoRefreshSource = useRef<string | null>(null);
   const cacheQueryKey = ["source-scan-cache", environmentId, source.id] as const;
@@ -1194,9 +1256,8 @@ function SourceDrawer({
     setSelectedAgents((current) => current.includes(agent) ? current.filter((item) => item !== agent) : [...current, agent]);
   };
   return (
-    <>
-      <DetailDrawer open onOpenChange={(open) => { if (!open) onClose(); }}>
-        <DetailDrawerContent className="source-drawer">
+    <DetailDrawer open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DetailDrawerContent className="source-drawer">
           <div className="drawer-header source-drawer-header">
             <span className="source-drawer-icon"><SourceIcon kind={source.kind} /></span>
             <div className="min-w-0 flex-1">
@@ -1302,13 +1363,6 @@ function SourceDrawer({
                 )}
               </motion.div>
             </AnimatePresence>
-            <div className="drawer-section drawer-danger-section">
-              <div className="drawer-section-title">移除来源</div>
-              <p className="mb-3 text-xs leading-5 text-muted-foreground">只移除来源配置，不会删除已经安装到当前 Hub 的 Skill。</p>
-              <Button variant="destructive" size="sm" disabled={install.isPending} onClick={() => setRemoveOpen(true)}>
-                <Trash2 className="h-3.5 w-3.5" /> 移除来源
-              </Button>
-            </div>
           </div>
           {pendingSkills.length > 0 && (
             <div className="source-drawer-footer">
@@ -1327,23 +1381,8 @@ function SourceDrawer({
               </Button>
             </div>
           )}
-        </DetailDrawerContent>
-      </DetailDrawer>
-      <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>移除来源 {source.id}？</DialogTitle>
-            <DialogDescription>只会移除来源配置；已经安装到当前 Hub 的 Skill 会继续保留。</DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setRemoveOpen(false)}>取消</Button>
-            <Button variant="destructive" pending={removing} pendingLabel="移除中" onClick={onRemove}>
-              移除来源
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
+      </DetailDrawerContent>
+    </DetailDrawer>
   );
 }
 
@@ -1618,7 +1657,7 @@ function sourceKindLabel(kind: string) {
   return kind;
 }
 
-function restoreFocusToItem(attribute: "data-skill-id" | "data-source-id", value: string) {
+function restoreFocusToItem(attribute: "data-skill-id" | "data-source-id" | "data-source-remove-id", value: string) {
   requestAnimationFrame(() => {
     const elements = document.querySelectorAll<HTMLButtonElement>(`button[${attribute}]`);
     Array.from(elements).find((element) => element.getAttribute(attribute) === value)?.focus();

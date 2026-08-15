@@ -371,16 +371,14 @@
   }
 
   .stats-strip {
-    @apply grid overflow-hidden rounded-xl border;
+    @apply grid gap-2;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    border-color: hsl(var(--separator) / 0.52);
-    background: hsl(var(--glass) / 0.52);
-    box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.14);
   }
 
   .stat-item {
-    @apply min-w-0 border-r px-4 py-3 last:border-r-0;
-    border-color: hsl(var(--separator) / 0.36);
+    @apply min-w-0 rounded-xl px-4 py-3;
+    background: hsl(var(--surface-subtle) / 0.58);
+    box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.16);
   }
 
   .kicker,
@@ -406,19 +404,27 @@
   }
 
   .workspace-toolbar {
-    @apply flex items-center justify-between gap-3 rounded-xl border px-4 py-3;
-    border-color: hsl(var(--separator) / 0.52);
-    background: hsl(var(--glass) / 0.52);
-    box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.14);
+    @apply flex items-center justify-between gap-3 rounded-xl px-3 py-2.5;
+    background: hsl(var(--surface-subtle) / 0.42);
+    box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.12);
   }
 
   .search-field {
-    @apply flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-input px-3 text-muted-foreground focus-within:border-[hsl(var(--accent))] focus-within:ring-2 focus-within:ring-ring/15;
+    @apply flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg px-3 text-muted-foreground focus-within:ring-2 focus-within:ring-ring/20;
     flex: 0 1 360px;
     min-width: 220px;
     max-width: 360px;
-    background: hsl(var(--card) / 0.76);
-    box-shadow: inset 0 1px 2px hsl(var(--shadow-color) / 0.05);
+    background: hsl(var(--glass) / 0.74);
+    box-shadow:
+      inset 0 1px 0 hsl(var(--glass-edge) / 0.22),
+      0 1px 2px hsl(var(--shadow-color) / 0.045);
+    transition:
+      background-color 140ms ease,
+      box-shadow 140ms ease;
+  }
+
+  .search-field:focus-within {
+    background: hsl(var(--card));
   }
 
   .search-field input {
@@ -438,14 +444,15 @@
   }
 
   .select-trigger {
-    @apply inline-flex h-8 min-w-0 shrink-0 items-center justify-between gap-2 rounded-md border px-2.5 text-xs font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-50;
-    border-color: hsl(var(--separator) / 0.72);
-    background: hsl(var(--glass) / 0.64);
-    box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.16);
+    @apply inline-flex h-8 min-w-0 shrink-0 items-center justify-between gap-2 rounded-lg border-0 px-2.5 text-xs font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:pointer-events-none disabled:opacity-50;
+    background: hsl(var(--glass) / 0.72);
+    box-shadow:
+      inset 0 1px 0 hsl(var(--glass-edge) / 0.2),
+      0 1px 2px hsl(var(--shadow-color) / 0.04);
     transition:
       color 120ms ease,
       background-color 120ms ease,
-      border-color 120ms ease,
+      box-shadow 120ms ease,
       transform 100ms var(--ease-out);
   }
 
@@ -492,16 +499,14 @@
   }
 
   .workspace-list {
-    @apply min-w-0 overflow-hidden rounded-xl border;
-    border-color: hsl(var(--separator) / 0.52);
-    background: hsl(var(--glass) / 0.52);
-    box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.14);
+    @apply min-w-0 overflow-hidden rounded-xl;
+    background: hsl(var(--glass) / 0.38);
+    box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.1);
   }
 
   .workspace-list-header {
-    @apply flex items-center justify-between gap-4 border-b px-4 py-3.5;
-    border-color: hsl(var(--separator) / 0.42);
-    background: hsl(var(--surface-subtle) / 0.22);
+    @apply flex items-center justify-between gap-4 px-4 pb-2 pt-4;
+    background: transparent;
   }
 
   .section-title {
@@ -522,22 +527,27 @@
   }
 
   .skill-list {
-    @apply divide-y;
-    border-color: hsl(var(--separator) / 0.46);
+    @apply grid gap-1.5 p-2;
   }
 
   .skill-row {
-    @apply grid min-w-0 items-center gap-4 px-4 py-3 hover:bg-[hsl(var(--surface-hover)/0.42)];
+    @apply grid min-w-0 items-center gap-4 rounded-xl px-3.5 py-3 hover:bg-[hsl(var(--surface-hover)/0.58)];
     grid-template-columns: minmax(0, 1fr) auto 28px;
     min-height: 74px;
+    background: hsl(var(--surface-subtle) / 0.26);
     transition:
       background-color 120ms ease,
-      box-shadow 120ms ease;
+      box-shadow 120ms ease,
+      transform 100ms var(--ease-out);
+  }
+
+  .skill-row:active {
+    transform: scale(0.998);
   }
 
   .pagination-bar {
-    @apply flex items-center justify-between gap-4 border-t px-4 py-3;
-    border-color: hsl(var(--separator) / 0.5);
+    @apply m-2 mt-0 flex items-center justify-between gap-4 rounded-xl px-3 py-2.5;
+    background: hsl(var(--surface-subtle) / 0.48);
   }
 
   .pagination-summary,
@@ -669,6 +679,10 @@
     background: hsl(var(--surface-subtle) / 0.34);
   }
 
+  .drawer-header-actions {
+    @apply flex shrink-0 items-center gap-1;
+  }
+
   .drawer-kicker {
     @apply mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[hsl(var(--accent))];
   }
@@ -690,7 +704,7 @@
   }
 
   .drawer-status-list {
-    @apply divide-y divide-border rounded-lg border border-border;
+    @apply grid gap-2;
   }
 
   .drawer-status-row,
@@ -708,9 +722,78 @@
     color: hsl(var(--destructive));
   }
 
+  .status-text-success {
+    color: hsl(var(--success));
+  }
+
   .path-button {
     @apply rounded-lg border border-border bg-[hsl(var(--surface-subtle))] text-muted-foreground;
     box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.14);
+  }
+
+  .skill-detail-drawer .drawer-header {
+    border-bottom: 0;
+    background: transparent;
+  }
+
+  .skill-detail-drawer .drawer-header:focus {
+    outline: none;
+  }
+
+  .skill-detail-drawer .drawer-body {
+    @apply px-5 pb-5 pt-2;
+  }
+
+  .skill-detail-drawer .drawer-section {
+    @apply mt-5;
+  }
+
+  .skill-drawer-description {
+    @apply rounded-xl px-4 py-3.5 text-sm leading-6 text-muted-foreground;
+    background: hsl(var(--surface-subtle) / 0.46);
+    box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.12);
+  }
+
+  .skill-detail-drawer .drawer-status-list {
+    @apply grid gap-2 rounded-none border-0;
+  }
+
+  .skill-detail-drawer .drawer-status-row {
+    @apply min-h-10 justify-between rounded-xl px-3.5 py-2.5;
+    background: hsl(var(--surface-subtle) / 0.52);
+  }
+
+  .skill-detail-drawer .drawer-status-row:hover {
+    background: hsl(var(--surface-hover) / 0.62);
+  }
+
+  .skill-detail-drawer .status-text {
+    @apply rounded-md px-2 py-1 text-[10px] font-medium leading-none;
+    background: hsl(var(--surface-hover) / 0.56);
+  }
+
+  .skill-detail-drawer .status-text-success {
+    background: hsl(var(--success) / 0.09);
+  }
+
+  .skill-detail-drawer .status-text-danger {
+    background: hsl(var(--destructive) / 0.09);
+  }
+
+  .skill-detail-drawer .path-button {
+    @apply rounded-xl border-0 px-3.5 py-3;
+    background: hsl(var(--surface-subtle) / 0.52);
+    box-shadow: inset 0 1px 0 hsl(var(--glass-edge) / 0.12);
+  }
+
+  .skill-trash-trigger {
+    @apply text-muted-foreground;
+  }
+
+  .skill-trash-trigger:hover,
+  .skill-trash-trigger:focus-visible {
+    color: hsl(var(--destructive));
+    background: hsl(var(--destructive) / 0.08);
   }
 
   .muted-path {
@@ -745,15 +828,25 @@
   }
 
   .source-row {
-    @apply grid min-h-[68px] w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-[hsl(var(--surface-hover)/0.5)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30;
-    grid-template-columns: 32px minmax(0, 1fr) auto;
+    @apply grid min-h-[68px] w-full min-w-0 items-center gap-1 rounded-xl pr-2;
+    grid-template-columns: minmax(0, 1fr) 36px;
     transition:
       background-color 120ms ease,
-      box-shadow 120ms ease,
-      transform 100ms var(--ease-out);
+      box-shadow 120ms ease;
   }
 
-  .source-row:active {
+  .source-row:hover,
+  .source-row:focus-within {
+    background: hsl(var(--surface-hover) / 0.5);
+  }
+
+  .source-row-open {
+    @apply grid min-h-[68px] min-w-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30;
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+    transition: transform 100ms var(--ease-out);
+  }
+
+  .source-row-open:active {
     transform: scale(0.997);
   }
 
@@ -782,6 +875,30 @@
 
   .source-row-trailing .inline-flex {
     @apply border-0 bg-[hsl(var(--surface-hover)/0.62)];
+  }
+
+  .source-row-remove {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 disabled:pointer-events-none disabled:opacity-35;
+    transition:
+      color 120ms ease,
+      background-color 120ms ease,
+      opacity 120ms ease,
+      transform 100ms var(--ease-out);
+  }
+
+  .source-row:hover .source-row-remove,
+  .source-row:focus-within .source-row-remove {
+    @apply text-muted-foreground;
+  }
+
+  .source-row-remove:hover,
+  .source-row-remove:focus-visible {
+    color: hsl(var(--destructive));
+    background: hsl(var(--destructive) / 0.08);
+  }
+
+  .source-row-remove:active:not(:disabled) {
+    transform: scale(0.96);
   }
 
   .source-drawer-header {
@@ -880,11 +997,6 @@
 
   .source-agent-option span {
     @apply truncate;
-  }
-
-  .source-drawer .drawer-danger-section {
-    @apply mt-5 rounded-xl border-0 px-3.5 py-3.5;
-    background: hsl(var(--destructive) / 0.055);
   }
 
   .source-drawer-footer {
@@ -1405,6 +1517,11 @@
     }
 
     .source-row {
+      @apply pr-3;
+      grid-template-columns: minmax(0, 1fr) 36px;
+    }
+
+    .source-row-open {
       @apply px-4;
       grid-template-columns: 32px minmax(0, 1fr) auto;
     }
@@ -1463,15 +1580,6 @@
 
     .stats-strip {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .stat-item:nth-child(2) {
-      @apply border-r-0;
-    }
-
-    .stat-item:nth-child(-n + 2) {
-      @apply border-b;
-      border-color: hsl(var(--separator) / 0.36);
     }
 
     .settings-path-row {
