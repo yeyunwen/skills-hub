@@ -15,6 +15,11 @@ concurrency:
   group: release-please-main
   cancel-in-progress: false
 
+env:
+  # Keep gh commands independent from actions/checkout. Some release-only paths
+  # intentionally run without a working tree.
+  GH_REPO: ${{ github.repository }}
+
 jobs:
   release-please:
     name: Maintain release PR

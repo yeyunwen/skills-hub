@@ -11,6 +11,21 @@ import { spawnSync } from 'node:child_process';
 
 const root = resolve(import.meta.dirname, '..');
 
+for (const workflow of [
+  '.github/workflows/release-please.yml',
+  '.github/workflows/release.yml',
+]) {
+  const source = readFileSync(resolve(root, workflow), 'utf8');
+  const jobsIndex = source.indexOf('\njobs:');
+  assert.notEqual(jobsIndex, -1, `${workflow} must define jobs`);
+  const workflowScope = source.slice(0, jobsIndex);
+  assert.match(
+    workflowScope,
+    /^\s*GH_REPO:\s*\$\{\{ github\.repository \}\}\s*$/m,
+    `${workflow} must give every gh command an explicit repository context`,
+  );
+}
+
 function runScript(script, args, { input = '', succeeds = true } = {}) {
   const result = spawnSync(process.execPath, [resolve(root, script), ...args], {
     cwd: root,
