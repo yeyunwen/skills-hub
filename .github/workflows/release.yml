@@ -1,38 +1,56 @@
 name: Release
 
+run-name: Build and publish ${{ inputs.tag }}
+
 on:
-  push:
-    tags:
-      - 'v*.*.*'
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing vX.Y.Z tag to package
+        description: Release Please draft tag to build (vX.Y.Z)
         required: true
         type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 env:
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+  RELEASE_TAG: ${{ inputs.tag }}
 
 jobs:
   validate:
     name: Validate release
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        with:
-          version: 10.28.0
-          run_install: false
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       - run: node scripts/check-version.mjs "${RELEASE_TAG}"
+      - name: Validate release source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin "${DEFAULT_BRANCH}" --tags
+          git tag --list 'v*' | node scripts/check-release-tag.mjs "${RELEASE_TAG}"
+          tag_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          if ! git merge-base --is-ancestor "${tag_commit}" "origin/${DEFAULT_BRANCH}"; then
+            echo "Tag ${RELEASE_TAG} is not contained in ${DEFAULT_BRANCH}." >&2
+            exit 1
+          fi
+          is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)"
+          if [[ "${is_draft}" != "true" ]]; then
+            echo "Release Please must create ${RELEASE_TAG} as a draft before packaging." >&2
+            exit 1
+          fi
 
   cli:
     name: CLI ${{ matrix.target }}
@@ -50,6 +68,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,6 +124,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             tauri_args: --target x86_64-pc-windows-msvc --bundles nsis,msi --no-sign --ci
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -146,13 +166,15 @@ jobs:
           tauriScript: pnpm tauri
           args: ${{ matrix.tauri_args }}
           releaseAssetNamePattern: skills-hub-v[version]-[platform]-[arch]-unsigned[setup][ext]
+          # Keep scripts/check-release-assets.mjs aligned with this pattern.
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: release-desktop-[platform]-[arch]-[bundle]
 
   release:
-    name: Create draft release
+    name: Upload verified draft assets
     needs: [cli, desktop]
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     permissions:
       contents: write
       id-token: write
@@ -161,6 +183,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
@@ -170,29 +195,102 @@ jobs:
         run: |
           mkdir release-assets
           find downloaded-assets -type f -exec cp {} release-assets/ \;
-          asset_count="$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          if [ "${asset_count}" -lt 10 ]; then
-            echo "Expected at least 10 CLI and Desktop assets, found ${asset_count}" >&2
-            exit 1
-          fi
+          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}"
       - name: Generate checksums
         run: |
           cd release-assets
-          sha256sum * > SHA256SUMS
+          LC_ALL=C sha256sum * > SHA256SUMS
+          cd ..
+          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}" --with-checksums
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: release-assets/*
-      - name: Create draft GitHub Release
+      - name: Upload assets and standardize release notes
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release_flags=(
-            --draft
-            --generate-notes
-            --title "skills-hub ${RELEASE_TAG}"
-            --verify-tag
-          )
-          if [[ "${RELEASE_TAG}" == *-* ]]; then
-            release_flags+=(--prerelease)
+          gh release upload "${RELEASE_TAG}" release-assets/* --clobber
+          gh release view "${RELEASE_TAG}" --json body --jq .body > current-notes.md
+          node scripts/render-release-notes.mjs current-notes.md release-notes.md
+          gh release edit "${RELEASE_TAG}" --notes-file release-notes.md
+
+  verify:
+    name: Verify published draft assets
+    needs: release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      attestations: read
+      contents: read
+    outputs:
+      release_url: ${{ steps.release.outputs.url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Download draft release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${RELEASE_TAG}" --dir release-assets
+      - name: Verify asset inventory and checksums
+        run: |
+          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}" --with-checksums
+          cd release-assets
+          sha256sum --check SHA256SUMS
+      - name: Verify GitHub build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while IFS= read -r -d '' asset; do
+            gh attestation verify "${asset}" --repo "${GITHUB_REPOSITORY}"
+          done < <(find release-assets -maxdepth 1 -type f -print0 | sort -z)
+      - name: Read release metadata
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_url="$(gh release view "${RELEASE_TAG}" --json url --jq .url)"
+          echo "url=${release_url}" >> "${GITHUB_OUTPUT}"
+
+  publish:
+    name: Approve and publish release
+    needs: verify
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    environment:
+      name: release
+      url: ${{ needs.verify.outputs.release_url }}
+    permissions:
+      contents: write
+    steps:
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_json="$(gh release view "${RELEASE_TAG}" --json isDraft,isPrerelease)"
+          is_draft="$(jq --raw-output .isDraft <<<"${release_json}")"
+          is_prerelease="$(jq --raw-output .isPrerelease <<<"${release_json}")"
+          if [[ "${is_draft}" != "true" ]]; then
+            echo "${RELEASE_TAG} is no longer a draft release." >&2
+            exit 1
           fi
-          gh release create "${RELEASE_TAG}" release-assets/* "${release_flags[@]}"
+          if [[ "${is_prerelease}" == "true" ]]; then
+            gh release edit "${RELEASE_TAG}" --draft=false --prerelease=true --latest=false
+          else
+            gh release edit "${RELEASE_TAG}" --draft=false --prerelease=false --latest
+          fi
+      - name: Write summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_url="$(gh release view "${RELEASE_TAG}" --json url --jq .url)"
+          {
+            echo "## Release published"
+            echo
+            echo "- Tag: \`${RELEASE_TAG}\`"
+            echo "- URL: ${release_url}"
+            echo "- Checksums and GitHub attestations: verified"
+          } >> "${GITHUB_STEP_SUMMARY}"

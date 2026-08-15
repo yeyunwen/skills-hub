@@ -5,7 +5,11 @@
   "type": "module",
   "packageManager": "pnpm@10.28.0",
   "scripts": {
+    "version:set": "node scripts/set-version.mjs",
     "version:check": "node scripts/check-version.mjs",
+    "release:assets:check": "node scripts/check-release-assets.mjs",
+    "release:tag:check": "node scripts/check-release-tag.mjs",
+    "release:tools:test": "node scripts/test-release-tools.mjs",
     "desktop:dev": "pnpm --dir apps/desktop tauri dev",
     "desktop:build": "pnpm --dir apps/desktop tauri build",
     "desktop:typecheck": "pnpm --dir apps/desktop typecheck",
