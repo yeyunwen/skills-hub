@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import {
   mkdtempSync,
+  mkdirSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -77,6 +79,12 @@ runScript('scripts/check-release-tag.mjs', ['v0.1.0'], {
 });
 
 const fixture = mkdtempSync(join(tmpdir(), 'skills-hub-release-assets-'));
+const downloadedFixture = mkdtempSync(
+  join(tmpdir(), 'skills-hub-downloaded-assets-'),
+);
+const preparedFixture = mkdtempSync(
+  join(tmpdir(), 'skills-hub-prepared-assets-'),
+);
 const tag = 'v0.1.2';
 const version = tag.slice(1);
 const assets = [
@@ -92,7 +100,46 @@ const assets = [
   `skills-hub-v${version}-windows-x64-unsigned.msi`,
 ];
 
+const workflowArtifacts = new Map([
+  [
+    'release-cli-aarch64-apple-darwin',
+    `skh-${tag}-aarch64-apple-darwin.tar.gz`,
+  ],
+  [
+    'release-cli-x86_64-apple-darwin',
+    `skh-${tag}-x86_64-apple-darwin.tar.gz`,
+  ],
+  [
+    'release-cli-x86_64-pc-windows-msvc',
+    `skh-${tag}-x86_64-pc-windows-msvc.zip`,
+  ],
+  [
+    'release-cli-x86_64-unknown-linux-gnu',
+    `skh-${tag}-x86_64-unknown-linux-gnu.tar.gz`,
+  ],
+  ['release-desktop-darwin-aarch64-dmg', `Skills Hub_${version}_aarch64.dmg`],
+  ['release-desktop-darwin-x64-dmg', `Skills Hub_${version}_x64.dmg`],
+  ['release-desktop-linux-amd64-appimage', `Skills Hub_${version}_amd64.AppImage`],
+  ['release-desktop-linux-amd64-deb', `Skills Hub_${version}_amd64.deb`],
+  ['release-desktop-windows-x64-nsis', `Skills Hub_${version}_x64-setup.exe`],
+  ['release-desktop-windows-x64-msi', `Skills Hub_${version}_x64_en-US.msi`],
+]);
+
 try {
+  for (const [artifact, filename] of workflowArtifacts) {
+    const directory = join(downloadedFixture, artifact);
+    mkdirSync(directory);
+    writeFileSync(join(directory, filename), 'fixture');
+  }
+
+  runScript('scripts/prepare-release-assets.mjs', [
+    downloadedFixture,
+    preparedFixture,
+    tag,
+  ]);
+  assert.deepEqual(readdirSync(preparedFixture).sort(), [...assets].sort());
+  runScript('scripts/check-release-assets.mjs', [preparedFixture, tag]);
+
   for (const asset of assets) {
     writeFileSync(join(fixture, asset), 'fixture');
   }
@@ -137,6 +184,8 @@ try {
   assert.match(notes, /## Changes/);
 } finally {
   rmSync(fixture, { recursive: true, force: true });
+  rmSync(downloadedFixture, { recursive: true, force: true });
+  rmSync(preparedFixture, { recursive: true, force: true });
 }
 
 console.log('Release tooling tests passed');
