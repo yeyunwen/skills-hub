@@ -467,6 +467,25 @@ let mockPreferences: HubPreferences = {
   agents: mockAgentConfigs,
 };
 
+function mockSourceScan(environmentId: string, sourceRef: string): SourceScanResult {
+  const sources = environmentId === "local" ? mockSources : (mockRemoteSources[environmentId] ?? []);
+  const source = sources.find((item) => item.id === sourceRef) ?? sources[0] ?? { id: sourceRef, url: "", kind: "generic-git" };
+  const installed = mockInstalledSourceSkills[`${environmentId}:${sourceRef}`] ?? new Set<string>();
+  return {
+    source: {
+      ...source,
+      skillCount: 3,
+      lastScanAt: source?.lastScanAt ?? new Date(Date.now() - 5 * 60_000).toISOString(),
+    },
+    root: "/tmp/skills-source",
+    skills: [
+      { name: "react-review", sourcePath: "skills/react-review", description: "React 代码审查", installed: installed.has("react-review") },
+      { name: "release-notes", sourcePath: "skills/release-notes", description: "生成发布说明", installed: true },
+      { name: "incident-helper", sourcePath: "skills/incident-helper", description: "故障排查流程", installed: installed.has("incident-helper") },
+    ],
+  };
+}
+
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (isTauriRuntime) return tauriInvoke<T>(command, args);
   await new Promise((resolve) => window.setTimeout(resolve, 80));
@@ -650,20 +669,17 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
       else mockRemoteSources[environmentId] = sources.filter((item) => item.id !== sourceRef);
       return source as T;
     }
+    case "get_environment_source_cache": {
+      const environmentId = String(input.environmentId ?? "local");
+      const sourceRef = String(input.sourceRef ?? "");
+      return mockSourceScan(environmentId, sourceRef) as T;
+    }
     case "scan_environment_source": {
       const environmentId = String(input.environmentId ?? "local");
       const sourceRef = String(input.sourceRef ?? "");
-      const sources = environmentId === "local" ? mockSources : (mockRemoteSources[environmentId] ?? []);
-      const installed = mockInstalledSourceSkills[`${environmentId}:${sourceRef}`] ?? new Set<string>();
-      return {
-        source: sources.find((item) => item.id === sourceRef) ?? sources[0],
-        root: "/tmp/skills-source",
-        skills: [
-          { name: "react-review", sourcePath: "skills/react-review", description: "React 代码审查", installed: installed.has("react-review") },
-          { name: "release-notes", sourcePath: "skills/release-notes", description: "生成发布说明", installed: true },
-          { name: "incident-helper", sourcePath: "skills/incident-helper", description: "故障排查流程", installed: installed.has("incident-helper") },
-        ],
-      } as T;
+      const result = mockSourceScan(environmentId, sourceRef);
+      result.source.lastScanAt = new Date().toISOString();
+      return result as T;
     }
     case "install_environment_source": {
       const environmentId = String(input.environmentId ?? "local");
@@ -893,6 +909,8 @@ export const api = {
     invoke<SkillSource | null>("remove_environment_source", { input }),
   scanEnvironmentSource: (input: { environmentId: string; sourceRef: string; dryRun?: boolean }) =>
     invoke<SourceScanResult>("scan_environment_source", { input }),
+  getEnvironmentSourceCache: (input: { environmentId: string; sourceRef: string }) =>
+    invoke<SourceScanResult | null>("get_environment_source_cache", { input }),
   installEnvironmentSource: (input: {
     environmentId: string;
     sourceRef: string;

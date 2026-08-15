@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { memo, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isTauri } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -32,6 +32,7 @@ import {
   type EnvironmentSnapshot,
   type EnvironmentSummary,
   type SkillImportPreview,
+  type SourceScanResult,
   type SkillSource,
   type SyncMethod,
 } from "@/lib/api";
@@ -94,6 +95,23 @@ function updateSnapshotAgentStatus(
 
 function configuredAgentLabel(agent: AgentKind, config?: HubConfig) {
   return config?.agents?.[agent]?.label ?? agent;
+}
+
+function formatSourceScanTime(value?: string | null) {
+  if (!value) return "尚未更新";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "更新时间未知";
+  const elapsed = Math.max(0, Date.now() - timestamp);
+  if (elapsed < 60_000) return "刚刚";
+  if (elapsed < 60 * 60_000) return `${Math.floor(elapsed / 60_000)} 分钟前`;
+  if (elapsed < 24 * 60 * 60_000) return `${Math.floor(elapsed / (60 * 60_000))} 小时前`;
+  if (elapsed < 7 * 24 * 60 * 60_000) return `${Math.floor(elapsed / (24 * 60 * 60_000))} 天前`;
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
 }
 
 const statusLabels: Record<string, string> = {
@@ -948,6 +966,11 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   const [addOpen, setAddOpen] = useState(false);
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
   const sources = snapshot.data?.sources ?? [];
+  const agents = useMemo(() => snapshot.data?.agents.map((item) => item.agent) ?? [], [snapshot.data?.agents]);
+  const agentLabels = useMemo(
+    () => Object.fromEntries(agents.map((agent) => [agent, configuredAgentLabel(agent, snapshot.data?.config)])),
+    [agents, snapshot.data?.config],
+  );
   const canManageSources = environment.kind === "local" || Boolean(
     snapshot.data?.capabilities.ssh && snapshot.data.capabilities.git && snapshot.data.capabilities.python3,
   );
@@ -1060,6 +1083,8 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
         <SourceDrawer
           environmentId={environment.id}
           source={selectedSourceData}
+          agents={agents}
+          agentLabels={agentLabels}
           removing={removeSource.isPending && removeSource.variables === selectedSourceData.id}
           onClose={closeSourceDrawer}
           onRemove={() => removeSource.mutate(selectedSourceData.id)}
@@ -1080,12 +1105,16 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
 function SourceDrawer({
   environmentId,
   source,
+  agents,
+  agentLabels,
   removing,
   onClose,
   onRemove,
 }: {
   environmentId: string;
   source: SkillSource;
+  agents: AgentKind[];
+  agentLabels: Record<string, string>;
   removing: boolean;
   onClose: () => void;
   onRemove: () => void;
@@ -1094,25 +1123,76 @@ function SourceDrawer({
   const { showToast } = useToast();
   const reduceMotion = useReducedMotion();
   const [removeOpen, setRemoveOpen] = useState(false);
-  const scan = useQuery({
-    queryKey: ["source-scan", environmentId, source.id],
-    queryFn: () => api.scanEnvironmentSource({ environmentId, sourceRef: source.id }),
+  const [selectedAgents, setSelectedAgents] = useState<AgentKind[]>([]);
+  const autoRefreshSource = useRef<string | null>(null);
+  const cacheQueryKey = ["source-scan-cache", environmentId, source.id] as const;
+  const cachedScan = useQuery({
+    queryKey: cacheQueryKey,
+    queryFn: () => api.getEnvironmentSourceCache({ environmentId, sourceRef: source.id }),
     retry: false,
+    staleTime: Infinity,
   });
-  const install = useMutation({
-    mutationFn: ({ skills }: { skills: string[]; mode: "single" | "all" }) => api.installEnvironmentSource({ environmentId, sourceRef: source.id, skills, all: false, force: false }),
+  const refreshScan = useMutation({
+    mutationFn: () => api.scanEnvironmentSource({ environmentId, sourceRef: source.id }),
     onSuccess: async (result) => {
-      showToast({ tone: "success", title: "Skill 安装完成", description: `已安装 ${result.installed.length} 个，跳过 ${result.skipped.length} 个。` });
-      await Promise.all([
-        scan.refetch(),
-        queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environmentId] }),
-      ]);
+      queryClient.setQueryData(cacheQueryKey, result);
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environmentId] });
+    },
+  });
+  useEffect(() => {
+    if (!cachedScan.isFetched || autoRefreshSource.current === source.id) return;
+    autoRefreshSource.current = source.id;
+    const lastScanAt = cachedScan.data?.source.lastScanAt ?? cachedScan.data?.source.last_scan_at;
+    const lastScanTime = lastScanAt ? Date.parse(lastScanAt) : 0;
+    if (!lastScanTime || Date.now() - lastScanTime > 5 * 60_000) refreshScan.mutate();
+  }, [cachedScan.isFetched, source.id]);
+  const install = useMutation({
+    mutationFn: async ({ skills, mode }: { skills: string[]; mode: "single" | "all" }) => {
+      const result = await api.installEnvironmentSource({ environmentId, sourceRef: source.id, skills, all: false, force: false });
+      const syncResults = selectedAgents.length
+        ? await Promise.allSettled(result.installed.map((skill) => api.linkEnvironmentSkill({
+            environmentId,
+            skillName: skill.name,
+            tools: selectedAgents,
+          })))
+        : [];
+      return {
+        mode,
+        result,
+        syncFailures: syncResults.filter((item) => item.status === "rejected").length,
+      };
+    },
+    onSuccess: async ({ result, syncFailures }) => {
+      const installedNames = new Set(result.installed.map((skill) => skill.name));
+      queryClient.setQueryData<SourceScanResult | null>(cacheQueryKey, (current) => current ? {
+        ...current,
+        skills: current.skills.map((skill) => installedNames.has(skill.name) ? { ...skill, installed: true } : skill),
+      } : current);
+      const hasSyncWarnings = syncFailures > 0;
+      showToast({
+        tone: hasSyncWarnings ? "error" : "success",
+        title: hasSyncWarnings ? "Skill 已安装，同步未全部完成" : "Skill 安装完成",
+        description: `已安装 ${result.installed.length} 个，跳过 ${result.skipped.length} 个${selectedAgents.length ? `；同步到 ${selectedAgents.length} 个 Agent` : ""}${syncFailures ? `，${syncFailures} 个同步失败` : ""}。`,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environmentId] });
     },
     onError: (error) => showToast({ tone: "error", title: "Skill 安装失败", description: getErrorMessage(error) }),
   });
-  const pendingSkills = scan.data?.skills.filter((skill) => !skill.installed) ?? [];
-  const installedCount = (scan.data?.skills.length ?? 0) - pendingSkills.length;
-  const scanState = scan.isLoading ? "loading" : scan.isError && !scan.data ? "error" : "ready";
+  const scanData = cachedScan.data ?? undefined;
+  const pendingSkills = scanData?.skills.filter((skill) => !skill.installed) ?? [];
+  const installedCount = (scanData?.skills.length ?? 0) - pendingSkills.length;
+  const scanError = refreshScan.error ?? cachedScan.error;
+  const scanState = scanData ? "ready" : scanError ? "error" : "loading";
+  const isRefreshing = refreshScan.isPending && Boolean(scanData);
+  const lastScanAt = scanData?.source.lastScanAt ?? scanData?.source.last_scan_at;
+  const refreshStatus = isRefreshing
+    ? "显示本地缓存 · 正在后台更新"
+    : refreshScan.isError && scanData
+      ? "显示本地缓存 · 更新失败"
+      : `上次更新 ${formatSourceScanTime(lastScanAt)}`;
+  const toggleAgent = (agent: AgentKind) => {
+    setSelectedAgents((current) => current.includes(agent) ? current.filter((item) => item !== agent) : [...current, agent]);
+  };
   return (
     <>
       <DetailDrawer open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -1130,20 +1210,54 @@ function SourceDrawer({
             <DetailDrawerCloseButton />
           </div>
           <div className="source-drawer-summary" aria-label="来源扫描摘要">
-            <div><span>Skill</span><strong>{scan.data?.skills.length ?? "—"}</strong></div>
-            <div><span>已纳管</span><strong>{scan.data ? installedCount : "—"}</strong></div>
-            <div><span>待纳管</span><strong>{scan.data ? pendingSkills.length : "—"}</strong></div>
+            <div><span>Skill</span><strong>{scanData?.skills.length ?? "—"}</strong></div>
+            <div><span>已安装</span><strong>{scanData ? installedCount : "—"}</strong></div>
+            <div><span>待安装</span><strong>{scanData ? pendingSkills.length : "—"}</strong></div>
           </div>
           <div className="drawer-body source-drawer-body">
             <div className="source-drawer-section-header">
               <div>
                 <div className="drawer-section-title">来源 Skill</div>
-                <div className="section-caption">扫描仓库并选择要纳管的 Skill</div>
+                <div
+                  className={cn("section-caption", refreshScan.isError && scanData && "source-refresh-error")}
+                  title={refreshScan.isError ? getErrorMessage(refreshScan.error) : undefined}
+                  aria-live="polite"
+                >
+                  {refreshStatus}
+                </div>
               </div>
-              <Button variant="secondary" size="sm" disabled={scan.isFetching || install.isPending} onClick={() => void scan.refetch()}>
-                <RefreshCw className={cn("h-3.5 w-3.5", scan.isFetching && "animate-spin")} /> 重新扫描
+              <Button variant="secondary" size="sm" disabled={refreshScan.isPending || install.isPending} onClick={() => refreshScan.mutate()}>
+                <RefreshCw className={cn("h-3.5 w-3.5", refreshScan.isPending && "animate-spin")} /> 更新
               </Button>
             </div>
+            {agents.length > 0 && (
+              <div className="source-agent-sync" aria-labelledby="source-agent-sync-title">
+                <div className="source-agent-sync-copy">
+                  <div id="source-agent-sync-title" className="drawer-section-title">安装后同步到</div>
+                  <div className="section-caption">{selectedAgents.length ? `已选择 ${selectedAgents.length} 个 Agent` : "不选择则只安装到当前 Hub"}</div>
+                </div>
+                <div className="source-agent-options">
+                  {agents.map((agent) => {
+                    const selected = selectedAgents.includes(agent);
+                    return (
+                      <Button
+                        key={agent}
+                        type="button"
+                        variant={selected ? "default" : "secondary"}
+                        size="sm"
+                        className="source-agent-option"
+                        aria-pressed={selected}
+                        disabled={install.isPending}
+                        onClick={() => toggleAgent(agent)}
+                      >
+                        <AgentIcon agent={agent} size={14} />
+                        <span>{agentLabels[agent] ?? agent}</span>
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <AnimatePresence initial={false} mode="wait">
               <motion.div
                 key={scanState}
@@ -1153,11 +1267,11 @@ function SourceDrawer({
                 transition={{ duration: reduceMotion ? 0.1 : 0.14, ease: [0.23, 1, 0.32, 1] }}
                 className="source-scan-content"
               >
-                {scanState === "loading" && <PageLoading compact label="正在扫描来源…" />}
-                {scanState === "error" && <PageError title="扫描失败" message={getErrorMessage(scan.error)} onRetry={() => void scan.refetch()} />}
-                {scan.data && (
+                {scanState === "loading" && <PageLoading compact label={refreshScan.isPending ? "首次读取来源…" : "正在读取本地缓存…"} />}
+                {scanState === "error" && <PageError title="读取来源失败" message={getErrorMessage(scanError)} onRetry={() => refreshScan.mutate()} />}
+                {scanData && (
                   <div className="source-scan-list">
-                    {scan.data.skills.map((skill) => {
+                    {scanData.skills.map((skill) => {
                       const pending = install.isPending && install.variables?.mode === "single" && install.variables.skills.includes(skill.name);
                       return (
                         <div key={skill.name} className="source-scan-row">
@@ -1165,7 +1279,9 @@ function SourceDrawer({
                             <div className="source-name" title={skill.name}>{skill.name}</div>
                             <div className="source-scan-description">{skill.description || "暂无描述"}</div>
                           </div>
-                          <Badge className="source-scan-status">{skill.installed ? "已纳管" : "待纳管"}</Badge>
+                          <Badge className={cn("source-scan-status", skill.installed ? "source-scan-status-installed" : "source-scan-status-pending")}>
+                            {skill.installed ? "已安装" : "待安装"}
+                          </Badge>
                           {!skill.installed && (
                             <Button
                               variant="secondary"
@@ -1175,13 +1291,13 @@ function SourceDrawer({
                               disabled={install.isPending}
                               onClick={() => install.mutate({ skills: [skill.name], mode: "single" })}
                             >
-                              安装
+                              {selectedAgents.length ? "安装并同步" : "安装"}
                             </Button>
                           )}
                         </div>
                       );
                     })}
-                    {!scan.data.skills.length && <EmptyState title="没有可安装的 Skill" description="该来源当前没有识别到 Skill。" />}
+                    {!scanData.skills.length && <EmptyState title="没有可安装的 Skill" description="该来源当前没有识别到 Skill。" />}
                   </div>
                 )}
               </motion.div>
@@ -1197,16 +1313,17 @@ function SourceDrawer({
           {pendingSkills.length > 0 && (
             <div className="source-drawer-footer">
               <div className="min-w-0">
-                <div className="text-sm font-medium">{pendingSkills.length} 个 Skill 待纳管</div>
-                <div className="section-caption">已存在的 Skill 不会被覆盖</div>
+                <div className="text-sm font-medium">{pendingSkills.length} 个 Skill 待安装</div>
+                <div className="section-caption">{selectedAgents.length ? `安装后同步到 ${selectedAgents.length} 个 Agent` : "已存在的 Skill 不会被覆盖"}</div>
               </div>
               <Button
+                size="sm"
                 pending={install.isPending && install.variables?.mode === "all"}
-                pendingLabel="安装中"
+                pendingLabel={selectedAgents.length ? "安装并同步中" : "安装中"}
                 disabled={install.isPending}
                 onClick={() => install.mutate({ skills: pendingSkills.map((skill) => skill.name), mode: "all" })}
               >
-                安装全部
+                {selectedAgents.length ? "安装并同步" : "安装全部"}
               </Button>
             </div>
           )}
