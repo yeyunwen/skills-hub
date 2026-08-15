@@ -455,6 +455,8 @@ let mockStatuses: SkillStatus[] = mockHub.map((skill) => ({
 let mockSources: SkillSource[] = [
   { id: "team-skills", url: "git@gitlab.example.com:ai/team-skills.git", kind: "gitlab" },
   { id: "community", url: "https://github.com/example/agent-skills.git", kind: "github" },
+  { id: "company-git", url: "ssh://git.example.com/ai/company-skills.git", kind: "generic-git" },
+  { id: "local-playground", url: "/mock/home/shared-skills", kind: "local" },
 ];
 const mockRemoteSources: Record<string, SkillSource[]> = {};
 const mockInstalledSourceSkills: Record<string, Set<string>> = {};

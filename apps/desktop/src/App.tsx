@@ -12,7 +12,6 @@ import {
   Cloud,
   ExternalLink,
   FolderOpen,
-  GitBranch,
   Loader2,
   Moon,
   Pencil,
@@ -41,10 +40,17 @@ import { AppSidebar, type Page } from "@/components/app-sidebar";
 import { EmptyState, PageError, PageLoading, PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  DetailDrawer,
+  DetailDrawerCloseButton,
+  DetailDrawerContent,
+  DetailDrawerDescription,
+  DetailDrawerTitle,
+} from "@/components/ui/detail-drawer";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { AgentIcon } from "@/lib/brand";
+import { AgentIcon, SourceIcon } from "@/lib/brand";
 import { useToast } from "@/lib/toast";
 import { useEnvironmentSnapshot } from "@/hooks/use-environment-snapshot";
 import {
@@ -260,6 +266,11 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
     }
     skillMutation.mutate({ skillName, agent, status });
   };
+  const closeSkillDrawer = () => {
+    const skillName = selectedSkillName;
+    setSelectedSkillName(null);
+    if (skillName) restoreFocusToItem("data-skill-id", skillName);
+  };
   const trashMutation = useMutation({
     mutationFn: (skillName: string) => api.trashEnvironmentSkill({ environmentId: environment.id, skillName }),
     onMutate: (skillName) => showToast({ tone: "loading", title: "正在移入回收站", description: skillName }),
@@ -414,20 +425,18 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
           </div>
         )}
       </section>
-      <AnimatePresence>
-        {selectedSkill && (
-          <SkillDrawer
-            row={selectedSkill}
-            snapshot={snapshot.data}
-            onClose={() => setSelectedSkillName(null)}
-            onAgentAction={(agent, status) => handleAgentAction(selectedSkill.name, agent, status)}
-            onTrash={() => trashMutation.mutate(selectedSkill.name)}
-            trashing={trashMutation.isPending}
-            agents={agents}
-            agentLabels={agentLabels}
-          />
-        )}
-      </AnimatePresence>
+      {selectedSkill && (
+        <SkillDrawer
+          row={selectedSkill}
+          snapshot={snapshot.data}
+          onClose={closeSkillDrawer}
+          onAgentAction={(agent, status) => handleAgentAction(selectedSkill.name, agent, status)}
+          onTrash={() => trashMutation.mutate(selectedSkill.name)}
+          trashing={trashMutation.isPending}
+          agents={agents}
+          agentLabels={agentLabels}
+        />
+      )}
       <TransferDialog open={transferOpen} onOpenChange={setTransferOpen} source={environment} environments={environments} />
       <ImportSkillDialog
         open={importOpen}
@@ -457,7 +466,7 @@ const SkillRow = memo(function SkillRow({
 }) {
   return (
     <div className="skill-row">
-      <button className="skill-row-main" onClick={onOpen}>
+      <button className="skill-row-main" data-skill-id={row.name} onClick={onOpen}>
         <div className="min-w-0">
           <div className="skill-row-title">
             <span className="truncate">{row.displayName}</span>
@@ -516,64 +525,50 @@ function SkillDrawer({
   agents: AgentKind[];
   agentLabels: Record<string, string>;
 }) {
-  const reduceMotion = useReducedMotion();
   const [trashOpen, setTrashOpen] = useState(false);
   const skill = snapshot.hub.find((item) => (item.dirName ?? item.dir_name ?? item.name) === row.name);
   return (
     <>
-      <motion.button
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: reduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
-        className="drawer-overlay"
-        aria-label="关闭详情"
-        onClick={onClose}
-      />
-      <motion.aside
-        initial={{ opacity: reduceMotion ? 0 : 1, transform: reduceMotion ? "none" : "translateX(100%)" }}
-        animate={{ opacity: 1, transform: "translateX(0%)" }}
-        exit={{ opacity: reduceMotion ? 0 : 1, transform: reduceMotion ? "none" : "translateX(100%)" }}
-        transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: [0.32, 0.72, 0, 1] }}
-        className="skill-drawer"
-      >
-        <div className="drawer-header">
-          <div className="min-w-0">
-            <div className="drawer-kicker">SKILL</div>
-            <h2 className="truncate text-lg font-semibold">{row.displayName}</h2>
-            <div className="muted-path">{skill?.path ?? row.path}</div>
+      <DetailDrawer open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DetailDrawerContent>
+          <div className="drawer-header">
+            <div className="min-w-0">
+              <div className="drawer-kicker">SKILL</div>
+              <DetailDrawerTitle>{row.displayName}</DetailDrawerTitle>
+              <DetailDrawerDescription>{skill?.path ?? row.path}</DetailDrawerDescription>
+            </div>
+            <DetailDrawerCloseButton />
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="关闭"><X className="h-4 w-4" /></button>
-        </div>
-        <div className="drawer-body">
-          <p className="text-sm leading-6 text-muted-foreground">{row.description || "暂无描述"}</p>
-          <div className="drawer-section">
-            <div className="drawer-section-title">Agent 状态</div>
-            <div className="drawer-status-list">
-              {agents.map((agent) => {
-                const status = agentStatus(row, agent);
-                return (
-                  <button key={agent} className="drawer-status-row" onClick={() => onAgentAction(agent, status)}>
-                    <span className="flex items-center gap-2"><AgentIcon agent={agent} size={15} /> {agentLabels[agent]}</span>
-                    <span className={cn("status-text", status === "conflict" && "status-text-danger")}>{status === "conflict" ? "备份并接管" : statusLabels[status] ?? status}</span>
-                  </button>
-                );
-              })}
+          <div className="drawer-body">
+            <p className="text-sm leading-6 text-muted-foreground">{row.description || "暂无描述"}</p>
+            <div className="drawer-section">
+              <div className="drawer-section-title">Agent 状态</div>
+              <div className="drawer-status-list">
+                {agents.map((agent) => {
+                  const status = agentStatus(row, agent);
+                  return (
+                    <button key={agent} className="drawer-status-row" onClick={() => onAgentAction(agent, status)}>
+                      <span className="flex items-center gap-2"><AgentIcon agent={agent} size={15} /> {agentLabels[agent]}</span>
+                      <span className={cn("status-text", status === "conflict" && "status-text-danger")}>{status === "conflict" ? "备份并接管" : statusLabels[status] ?? status}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="drawer-section">
+              <div className="drawer-section-title">文件位置</div>
+              <button className="path-button" onClick={() => skill?.path && void api.openPath(skill.path)}>
+                <FolderOpen className="h-4 w-4" /> <span className="truncate">{skill?.path ?? row.path}</span> <ExternalLink className="ml-auto h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="drawer-section drawer-danger-section">
+              <div className="drawer-section-title">移除 Skill</div>
+              <p className="mb-3 text-xs leading-5 text-muted-foreground">从当前环境移除，但不物理删除；内容会保存在 skills-hub 回收区中。</p>
+              <Button variant="destructive" size="sm" onClick={() => setTrashOpen(true)}><Trash2 className="h-3.5 w-3.5" /> 移入回收站</Button>
             </div>
           </div>
-          <div className="drawer-section">
-            <div className="drawer-section-title">文件位置</div>
-            <button className="path-button" onClick={() => skill?.path && void api.openPath(skill.path)}>
-              <FolderOpen className="h-4 w-4" /> <span className="truncate">{skill?.path ?? row.path}</span> <ExternalLink className="ml-auto h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className="drawer-section drawer-danger-section">
-            <div className="drawer-section-title">移除 Skill</div>
-            <p className="mb-3 text-xs leading-5 text-muted-foreground">从当前环境移除，但不物理删除；内容会保存在 skills-hub 回收区中。</p>
-            <Button variant="destructive" size="sm" onClick={() => setTrashOpen(true)}><Trash2 className="h-3.5 w-3.5" /> 移入回收站</Button>
-          </div>
-        </div>
-      </motion.aside>
+        </DetailDrawerContent>
+      </DetailDrawer>
       <Dialog open={trashOpen} onOpenChange={setTrashOpen}>
         <DialogContent>
           <DialogHeader>
@@ -970,6 +965,7 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
     onSuccess: async () => {
       showToast({ tone: "success", title: "来源已移除" });
       setSelectedSource(null);
+      requestAnimationFrame(() => document.getElementById("add-source-button")?.focus());
       await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] });
     },
     onError: (error) => showToast({ tone: "error", title: "来源移除失败", description: getErrorMessage(error) }),
@@ -977,8 +973,14 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   useEffect(() => {
     setSelectedSource(null);
   }, [environment.id]);
+  const closeSourceDrawer = () => {
+    const sourceId = selectedSource;
+    setSelectedSource(null);
+    if (sourceId) restoreFocusToItem("data-source-id", sourceId);
+  };
+  const selectedSourceData = sources.find((source) => source.id === selectedSource) ?? null;
   const sourceActions = (
-    <Button size="sm" disabled={!canManageSources || snapshot.isLoading} onClick={() => setAddOpen(true)}>
+    <Button id="add-source-button" size="sm" disabled={!canManageSources || snapshot.isLoading} onClick={() => setAddOpen(true)}>
       <Plus className="h-3.5 w-3.5" /> 添加来源
     </Button>
   );
@@ -1016,75 +1018,53 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
       )}
       <section className="workspace-list source-workspace">
         <div className="workspace-list-header"><div><div className="section-title">来源</div><div className="section-caption">{sources.length} 个来源</div></div></div>
-        <motion.div
-          className="source-workspace-body"
-          data-has-scan={Boolean(selectedSource)}
-        >
-          <div className="source-list">
-            <AnimatePresence initial={false} mode="popLayout">
-              {sources.map((source) => {
-                const removing = removeSource.isPending && removeSource.variables === source.id;
-                const selected = selectedSource === source.id;
-                return (
-                  <motion.div
-                    key={source.id}
-                    initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(4px)" }}
-                    animate={{ opacity: 1, transform: "translateY(0px)" }}
-                    exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-4px)" }}
-                    transition={{ duration: reduceMotion ? 0.1 : 0.16, ease: [0.23, 1, 0.32, 1] }}
-                    className={cn("source-row", selected && "source-row-selected")}
-                  >
-                    <span className="source-kind-icon"><SourceIcon kind={source.kind} /></span>
-                    <div className="source-copy">
-                      <div className="source-name" title={source.id}>{source.id}</div>
-                      <div className="muted-path" title={source.url}>{source.url}</div>
-                    </div>
-                    <div className="source-row-actions">
-                      <Badge>{source.kind}</Badge>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        aria-pressed={selected}
-                        onClick={() => setSelectedSource(selected ? null : source.id)}
-                      >
-                        {selected ? "关闭" : "扫描"}
-                      </Button>
-                      <button
-                        className="icon-button"
-                        aria-label={`移除来源 ${source.id}`}
-                        disabled={removeSource.isPending}
-                        onClick={() => removeSource.mutate(source.id)}
-                      >
-                        {removing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                      </button>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-            {!sources.length && (
-              <EmptyState
-                title="还没有来源"
-                description={canManageSources ? "添加 GitHub、GitLab、SSH Git 或目标机器上的本地目录。" : "补齐 Git 和 Python3 后即可添加来源。"}
-              />
-            )}
-          </div>
-          <AnimatePresence initial={false}>
-            {canManageSources && selectedSource && (
-              <motion.div
-                key={selectedSource}
-                initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(6px)" }}
-                animate={{ opacity: 1, transform: "translateY(0px)" }}
-                exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(6px)" }}
-                transition={{ duration: reduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
-                className="source-scan-pane"
-              >
-                <SourceScanPanel environmentId={environment.id} sourceId={selectedSource} onClose={() => setSelectedSource(null)} />
-              </motion.div>
-            )}
+        <div className="source-list">
+          <AnimatePresence initial={false} mode="popLayout">
+            {sources.map((source) => {
+              const selected = selectedSource === source.id;
+              return (
+                <motion.button
+                  type="button"
+                  key={source.id}
+                  initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(4px)" }}
+                  animate={{ opacity: 1, transform: "translateY(0px)" }}
+                  exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-4px)" }}
+                  transition={{ duration: reduceMotion ? 0.1 : 0.16, ease: [0.23, 1, 0.32, 1] }}
+                  className={cn("source-row", selected && "source-row-selected")}
+                  aria-haspopup="dialog"
+                  data-source-id={source.id}
+                  onClick={() => setSelectedSource(source.id)}
+                >
+                  <span className="source-kind-icon"><SourceIcon kind={source.kind} /></span>
+                  <span className="source-copy">
+                    <span className="source-name" title={source.id}>{source.id}</span>
+                    <span className="muted-path" title={source.url}>{source.url}</span>
+                  </span>
+                  <span className="source-row-trailing">
+                    <Badge>{sourceKindLabel(source.kind)}</Badge>
+                    <ChevronRight className="h-4 w-4" />
+                  </span>
+                </motion.button>
+              );
+            })}
           </AnimatePresence>
-        </motion.div>
+          {!sources.length && (
+            <EmptyState
+              title="还没有来源"
+              description={canManageSources ? "添加 GitHub、GitLab、SSH Git 或目标机器上的本地目录。" : "补齐 Git 和 Python3 后即可添加来源。"}
+            />
+          )}
+        </div>
       </section>
+      {canManageSources && selectedSourceData && (
+        <SourceDrawer
+          environmentId={environment.id}
+          source={selectedSourceData}
+          removing={removeSource.isPending && removeSource.variables === selectedSourceData.id}
+          onClose={closeSourceDrawer}
+          onRemove={() => removeSource.mutate(selectedSourceData.id)}
+        />
+      )}
       {canManageSources && (
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogContent>
@@ -1097,17 +1077,30 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   );
 }
 
-function SourceScanPanel({ environmentId, sourceId, onClose }: { environmentId: string; sourceId: string; onClose: () => void }) {
+function SourceDrawer({
+  environmentId,
+  source,
+  removing,
+  onClose,
+  onRemove,
+}: {
+  environmentId: string;
+  source: SkillSource;
+  removing: boolean;
+  onClose: () => void;
+  onRemove: () => void;
+}) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const reduceMotion = useReducedMotion();
+  const [removeOpen, setRemoveOpen] = useState(false);
   const scan = useQuery({
-    queryKey: ["source-scan", environmentId, sourceId],
-    queryFn: () => api.scanEnvironmentSource({ environmentId, sourceRef: sourceId }),
+    queryKey: ["source-scan", environmentId, source.id],
+    queryFn: () => api.scanEnvironmentSource({ environmentId, sourceRef: source.id }),
     retry: false,
   });
   const install = useMutation({
-    mutationFn: ({ skills, all }: { skills: string[]; all: boolean }) => api.installEnvironmentSource({ environmentId, sourceRef: sourceId, skills, all, force: false }),
+    mutationFn: ({ skills }: { skills: string[]; mode: "single" | "all" }) => api.installEnvironmentSource({ environmentId, sourceRef: source.id, skills, all: false, force: false }),
     onSuccess: async (result) => {
       showToast({ tone: "success", title: "Skill 安装完成", description: `已安装 ${result.installed.length} 个，跳过 ${result.skipped.length} 个。` });
       await Promise.all([
@@ -1118,75 +1111,122 @@ function SourceScanPanel({ environmentId, sourceId, onClose }: { environmentId: 
     onError: (error) => showToast({ tone: "error", title: "Skill 安装失败", description: getErrorMessage(error) }),
   });
   const pendingSkills = scan.data?.skills.filter((skill) => !skill.installed) ?? [];
+  const installedCount = (scan.data?.skills.length ?? 0) - pendingSkills.length;
   const scanState = scan.isLoading ? "loading" : scan.isError && !scan.data ? "error" : "ready";
   return (
-    <div className="source-scan-panel">
-      <div className="source-scan-header">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <div className="section-title">来源扫描</div>
-            {scan.isFetching && !scan.isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+    <>
+      <DetailDrawer open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DetailDrawerContent className="source-drawer">
+          <div className="drawer-header source-drawer-header">
+            <span className="source-drawer-icon"><SourceIcon kind={source.kind} /></span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <div className="drawer-kicker">安装来源</div>
+                <Badge>{sourceKindLabel(source.kind)}</Badge>
+              </div>
+              <DetailDrawerTitle>{source.id}</DetailDrawerTitle>
+              <DetailDrawerDescription title={source.url}>{source.url}</DetailDrawerDescription>
+            </div>
+            <DetailDrawerCloseButton />
           </div>
-          <div className="section-caption truncate" title={sourceId}>{sourceId}</div>
-        </div>
-        <div className="source-scan-actions">
-          {pendingSkills.length > 0 && (
-            <Button
-              size="sm"
-              pending={install.isPending && install.variables?.all}
-              pendingLabel="安装中"
-              disabled={install.isPending}
-              onClick={() => install.mutate({ skills: [], all: true })}
-            >
-              安装全部
-            </Button>
-          )}
-          <button className="icon-button" aria-label="关闭来源扫描" onClick={onClose}><X className="h-4 w-4" /></button>
-        </div>
-      </div>
-      <AnimatePresence initial={false} mode="wait">
-        <motion.div
-          key={scanState}
-          initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(3px)" }}
-          animate={{ opacity: 1, transform: "translateY(0px)" }}
-          exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-3px)" }}
-          transition={{ duration: reduceMotion ? 0.1 : 0.14, ease: [0.23, 1, 0.32, 1] }}
-          className="source-scan-content"
-        >
-          {scanState === "loading" && <PageLoading compact label="正在扫描来源…" />}
-          {scanState === "error" && <PageError title="扫描失败" message={getErrorMessage(scan.error)} onRetry={() => void scan.refetch()} />}
-          {scan.data && (
-            <div className="source-scan-list">
-              {scan.data.skills.map((skill) => {
-                const pending = install.isPending && !install.variables?.all && install.variables?.skills.includes(skill.name);
-                return (
-                  <div key={skill.name} className="source-scan-row">
-                    <div className="source-scan-copy">
-                      <div className="source-name" title={skill.name}>{skill.name}</div>
-                      <div className="source-scan-description">{skill.description || "暂无描述"}</div>
-                    </div>
-                    <Badge>{skill.installed ? "已纳管" : "待纳管"}</Badge>
-                    {!skill.installed && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        pending={pending}
-                        pendingLabel="安装中"
-                        disabled={install.isPending}
-                        onClick={() => install.mutate({ skills: [skill.name], all: false })}
-                      >
-                        安装
-                      </Button>
-                    )}
+          <div className="source-drawer-summary" aria-label="来源扫描摘要">
+            <div><span>Skill</span><strong>{scan.data?.skills.length ?? "—"}</strong></div>
+            <div><span>已纳管</span><strong>{scan.data ? installedCount : "—"}</strong></div>
+            <div><span>待纳管</span><strong>{scan.data ? pendingSkills.length : "—"}</strong></div>
+          </div>
+          <div className="drawer-body source-drawer-body">
+            <div className="source-drawer-section-header">
+              <div>
+                <div className="drawer-section-title">来源 Skill</div>
+                <div className="section-caption">扫描仓库并选择要纳管的 Skill</div>
+              </div>
+              <Button variant="secondary" size="sm" disabled={scan.isFetching || install.isPending} onClick={() => void scan.refetch()}>
+                <RefreshCw className={cn("h-3.5 w-3.5", scan.isFetching && "animate-spin")} /> 重新扫描
+              </Button>
+            </div>
+            <AnimatePresence initial={false} mode="wait">
+              <motion.div
+                key={scanState}
+                initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(3px)" }}
+                animate={{ opacity: 1, transform: "translateY(0px)" }}
+                exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-3px)" }}
+                transition={{ duration: reduceMotion ? 0.1 : 0.14, ease: [0.23, 1, 0.32, 1] }}
+                className="source-scan-content"
+              >
+                {scanState === "loading" && <PageLoading compact label="正在扫描来源…" />}
+                {scanState === "error" && <PageError title="扫描失败" message={getErrorMessage(scan.error)} onRetry={() => void scan.refetch()} />}
+                {scan.data && (
+                  <div className="source-scan-list">
+                    {scan.data.skills.map((skill) => {
+                      const pending = install.isPending && install.variables?.mode === "single" && install.variables.skills.includes(skill.name);
+                      return (
+                        <div key={skill.name} className="source-scan-row">
+                          <div className="source-scan-copy">
+                            <div className="source-name" title={skill.name}>{skill.name}</div>
+                            <div className="source-scan-description">{skill.description || "暂无描述"}</div>
+                          </div>
+                          <Badge className="source-scan-status">{skill.installed ? "已纳管" : "待纳管"}</Badge>
+                          {!skill.installed && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              pending={pending}
+                              pendingLabel="安装中"
+                              disabled={install.isPending}
+                              onClick={() => install.mutate({ skills: [skill.name], mode: "single" })}
+                            >
+                              安装
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {!scan.data.skills.length && <EmptyState title="没有可安装的 Skill" description="该来源当前没有识别到 Skill。" />}
                   </div>
-                );
-              })}
-              {!scan.data.skills.length && <EmptyState title="没有可安装的 Skill" description="该来源当前没有识别到 Skill。" />}
+                )}
+              </motion.div>
+            </AnimatePresence>
+            <div className="drawer-section drawer-danger-section">
+              <div className="drawer-section-title">移除来源</div>
+              <p className="mb-3 text-xs leading-5 text-muted-foreground">只移除来源配置，不会删除已经安装到当前 Hub 的 Skill。</p>
+              <Button variant="destructive" size="sm" disabled={install.isPending} onClick={() => setRemoveOpen(true)}>
+                <Trash2 className="h-3.5 w-3.5" /> 移除来源
+              </Button>
+            </div>
+          </div>
+          {pendingSkills.length > 0 && (
+            <div className="source-drawer-footer">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{pendingSkills.length} 个 Skill 待纳管</div>
+                <div className="section-caption">已存在的 Skill 不会被覆盖</div>
+              </div>
+              <Button
+                pending={install.isPending && install.variables?.mode === "all"}
+                pendingLabel="安装中"
+                disabled={install.isPending}
+                onClick={() => install.mutate({ skills: pendingSkills.map((skill) => skill.name), mode: "all" })}
+              >
+                安装全部
+              </Button>
             </div>
           )}
-        </motion.div>
-      </AnimatePresence>
-    </div>
+        </DetailDrawerContent>
+      </DetailDrawer>
+      <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>移除来源 {source.id}？</DialogTitle>
+            <DialogDescription>只会移除来源配置；已经安装到当前 Hub 的 Skill 会继续保留。</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setRemoveOpen(false)}>取消</Button>
+            <Button variant="destructive" pending={removing} pendingLabel="移除中" onClick={onRemove}>
+              移除来源
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -1453,8 +1493,19 @@ function syncMethodLabel(method: SyncMethod) {
   return "自动";
 }
 
-function SourceIcon({ kind }: { kind: string }) {
-  return kind.toLowerCase().includes("git") ? <GitBranch className="h-4 w-4 text-muted-foreground" /> : <Cloud className="h-4 w-4 text-muted-foreground" />;
+function sourceKindLabel(kind: string) {
+  if (kind === "github") return "GitHub";
+  if (kind === "gitlab") return "GitLab";
+  if (kind === "generic-git") return "Git";
+  if (kind === "local") return "本地目录";
+  return kind;
+}
+
+function restoreFocusToItem(attribute: "data-skill-id" | "data-source-id", value: string) {
+  requestAnimationFrame(() => {
+    const elements = document.querySelectorAll<HTMLButtonElement>(`button[${attribute}]`);
+    Array.from(elements).find((element) => element.getAttribute(attribute) === value)?.focus();
+  });
 }
 
 function getErrorMessage(error: unknown) {
