@@ -22,4 +22,4 @@ console.workspace = true
 inquire.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-skills-hub-core = { version = "0.2.0", path = "../core" }
+skills-hub-core = { version = "0.2.1", path = "../core" }
