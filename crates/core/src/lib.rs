@@ -11,6 +11,7 @@ mod git;
 mod logging;
 mod remote;
 mod skill;
+mod skill_import;
 mod source;
 
 pub use agent::*;
@@ -21,4 +22,5 @@ pub use git::*;
 pub use logging::*;
 pub use remote::*;
 pub use skill::*;
+pub use skill_import::*;
 pub use source::*;

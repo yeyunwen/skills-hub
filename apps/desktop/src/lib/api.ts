@@ -343,6 +343,38 @@ export interface EnvironmentTrashResult {
   trashPath?: string;
 }
 
+export type SkillImportSourceKind = "directory" | "zip";
+export type SkillImportCandidateStatus = "ready" | "conflict" | "invalid";
+
+export interface SkillImportCandidate {
+  id: string;
+  name: string;
+  dirName: string;
+  relativePath: string;
+  description?: string | null;
+  status: SkillImportCandidateStatus;
+  reason?: string | null;
+}
+
+export interface SkillImportPreview {
+  sourcePath: string;
+  sourceKind: SkillImportSourceKind;
+  skills: SkillImportCandidate[];
+}
+
+export interface EnvironmentImportItem {
+  skillId: string;
+  skillName: string;
+  status: "imported" | "conflict" | "dry-run";
+  targetPath: string;
+  backupPath?: string | null;
+}
+
+export interface EnvironmentImportResult {
+  environment: EnvironmentSummary;
+  items: EnvironmentImportItem[];
+}
+
 const isTauriRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const MOCK_HOME = "/mock/home";
 const MOCK_HUB_DIR = `${MOCK_HOME}/.agents/skills`;
@@ -423,6 +455,8 @@ let mockStatuses: SkillStatus[] = mockHub.map((skill) => ({
 let mockSources: SkillSource[] = [
   { id: "team-skills", url: "git@gitlab.example.com:ai/team-skills.git", kind: "gitlab" },
   { id: "community", url: "https://github.com/example/agent-skills.git", kind: "github" },
+  { id: "company-git", url: "ssh://git.example.com/ai/company-skills.git", kind: "generic-git" },
+  { id: "local-playground", url: "/mock/home/shared-skills", kind: "local" },
 ];
 const mockRemoteSources: Record<string, SkillSource[]> = {};
 const mockInstalledSourceSkills: Record<string, Set<string>> = {};
@@ -432,6 +466,25 @@ let mockPreferences: HubPreferences = {
   hubDir: MOCK_HUB_DIR,
   agents: mockAgentConfigs,
 };
+
+function mockSourceScan(environmentId: string, sourceRef: string): SourceScanResult {
+  const sources = environmentId === "local" ? mockSources : (mockRemoteSources[environmentId] ?? []);
+  const source = sources.find((item) => item.id === sourceRef) ?? sources[0] ?? { id: sourceRef, url: "", kind: "generic-git" };
+  const installed = mockInstalledSourceSkills[`${environmentId}:${sourceRef}`] ?? new Set<string>();
+  return {
+    source: {
+      ...source,
+      skillCount: 3,
+      lastScanAt: source?.lastScanAt ?? new Date(Date.now() - 5 * 60_000).toISOString(),
+    },
+    root: "/tmp/skills-source",
+    skills: [
+      { name: "react-review", sourcePath: "skills/react-review", description: "React 代码审查", installed: installed.has("react-review") },
+      { name: "release-notes", sourcePath: "skills/release-notes", description: "生成发布说明", installed: true },
+      { name: "incident-helper", sourcePath: "skills/incident-helper", description: "故障排查流程", installed: installed.has("incident-helper") },
+    ],
+  };
+}
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (isTauriRuntime) return tauriInvoke<T>(command, args);
@@ -527,6 +580,48 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
         skillName,
         status: "transferred",
       })) as T;
+    case "preview_environment_import": {
+      const sourcePath = String(input.sourcePath ?? "/mock/shared-skills");
+      return {
+        sourcePath,
+        sourceKind: sourcePath.toLowerCase().endsWith(".zip") ? "zip" : "directory",
+        skills: [
+          { id: "team-review", name: "team-review", dirName: "team-review", relativePath: "team-review", description: "团队代码审查流程", status: "ready" },
+          { id: "github", name: "github", dirName: "github", relativePath: "github", description: "已有同名 Skill 的示例", status: "conflict", reason: "current environment already contains this skill" },
+          { id: "release-helper", name: "release-helper", dirName: "release-helper", relativePath: "release-helper", description: "发布辅助流程", status: "ready" },
+        ],
+      } as T;
+    }
+    case "import_environment_skills": {
+      const skillIds = (input.skillIds as string[] | undefined) ?? [];
+      const force = Boolean(input.force);
+      const candidates: Record<string, { name: string; description: string }> = {
+        "team-review": { name: "team-review", description: "团队代码审查流程" },
+        github: { name: "github", description: "已有同名 Skill 的示例" },
+        "release-helper": { name: "release-helper", description: "发布辅助流程" },
+      };
+      const items: EnvironmentImportItem[] = skillIds.map((skillId) => {
+        const candidate = candidates[skillId] ?? { name: skillId, description: "导入的 Skill" };
+        const conflict = candidate.name === "github" && !force;
+        if (!conflict && !mockHub.some((skill) => dirName(skill) === candidate.name)) {
+          const skill: SkillInfo = { name: candidate.name, dirName: candidate.name, path: `${MOCK_HUB_DIR}/${candidate.name}`, description: candidate.description };
+          mockHub = [...mockHub, skill];
+          mockStatuses = [...mockStatuses, {
+            skillName: candidate.name,
+            hubPath: skill.path,
+            agents: mockAgents.map(({ agent, skillsDir }) => ({ agent, status: "missing", path: `${skillsDir}/${candidate.name}`, targetPath: skill.path })),
+          }];
+        }
+        return {
+          skillId,
+          skillName: candidate.name,
+          status: conflict ? "conflict" : "imported",
+          targetPath: `${MOCK_HUB_DIR}/${candidate.name}`,
+          backupPath: candidate.name === "github" && force ? mockPath(`.config/skills-hub/backups/imports/mock/${candidate.name}`) : null,
+        };
+      });
+      return { environment: { id: String(input.environmentId ?? "local"), name: "当前环境", kind: "local" }, items } as T;
+    }
     case "link_environment_skill":
     case "unlink_environment_skill": {
       const skillName = String(input.skillName ?? "");
@@ -574,20 +669,17 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
       else mockRemoteSources[environmentId] = sources.filter((item) => item.id !== sourceRef);
       return source as T;
     }
+    case "get_environment_source_cache": {
+      const environmentId = String(input.environmentId ?? "local");
+      const sourceRef = String(input.sourceRef ?? "");
+      return mockSourceScan(environmentId, sourceRef) as T;
+    }
     case "scan_environment_source": {
       const environmentId = String(input.environmentId ?? "local");
       const sourceRef = String(input.sourceRef ?? "");
-      const sources = environmentId === "local" ? mockSources : (mockRemoteSources[environmentId] ?? []);
-      const installed = mockInstalledSourceSkills[`${environmentId}:${sourceRef}`] ?? new Set<string>();
-      return {
-        source: sources.find((item) => item.id === sourceRef) ?? sources[0],
-        root: "/tmp/skills-source",
-        skills: [
-          { name: "react-review", sourcePath: "skills/react-review", description: "React 代码审查", installed: installed.has("react-review") },
-          { name: "release-notes", sourcePath: "skills/release-notes", description: "生成发布说明", installed: true },
-          { name: "incident-helper", sourcePath: "skills/incident-helper", description: "故障排查流程", installed: installed.has("incident-helper") },
-        ],
-      } as T;
+      const result = mockSourceScan(environmentId, sourceRef);
+      result.source.lastScanAt = new Date().toISOString();
+      return result as T;
     }
     case "install_environment_source": {
       const environmentId = String(input.environmentId ?? "local");
@@ -778,6 +870,15 @@ export const api = {
     force?: boolean;
     dryRun?: boolean;
   }) => invoke<EnvironmentTransferResult[]>("transfer_skills", { input }),
+  previewEnvironmentImport: (input: { environmentId: string; sourcePath: string }) =>
+    invoke<SkillImportPreview>("preview_environment_import", { input }),
+  importEnvironmentSkills: (input: {
+    environmentId: string;
+    sourcePath: string;
+    skillIds: string[];
+    force?: boolean;
+    dryRun?: boolean;
+  }) => invoke<EnvironmentImportResult>("import_environment_skills", { input }),
   linkEnvironmentSkill: (input: {
     environmentId: string;
     skillName: string;
@@ -808,6 +909,8 @@ export const api = {
     invoke<SkillSource | null>("remove_environment_source", { input }),
   scanEnvironmentSource: (input: { environmentId: string; sourceRef: string; dryRun?: boolean }) =>
     invoke<SourceScanResult>("scan_environment_source", { input }),
+  getEnvironmentSourceCache: (input: { environmentId: string; sourceRef: string }) =>
+    invoke<SourceScanResult | null>("get_environment_source_cache", { input }),
   installEnvironmentSource: (input: {
     environmentId: string;
     sourceRef: string;

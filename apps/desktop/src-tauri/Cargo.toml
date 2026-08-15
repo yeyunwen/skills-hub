@@ -21,5 +21,6 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
+tauri-plugin-dialog = "2"
 opener = "0.7"
 skills-hub-core = { path = "../../../crates/core" }

@@ -11,10 +11,13 @@ use skills_hub_core::{
     compare_environments as core_compare_environments,
     discover_ssh_hosts as core_discover_ssh_hosts, get_environment as core_get_environment,
     get_preferences as core_get_preferences, get_skill_detail as core_get_skill_detail,
-    init_hub as core_init_hub, install_from_source as core_install_from_source,
-    link_skill as core_link_skill, list_environments as core_list_environments,
-    list_remotes as core_list_remotes, list_sources as core_list_sources,
-    list_status as core_list_status, migrate_from_agent as core_migrate_from_agent,
+    import_environment_skills as core_import_environment_skills, init_hub as core_init_hub,
+    install_from_cached_source as core_install_from_cached_source,
+    install_from_source as core_install_from_source, link_skill as core_link_skill,
+    list_environments as core_list_environments, list_remotes as core_list_remotes,
+    list_sources as core_list_sources, list_status as core_list_status,
+    migrate_from_agent as core_migrate_from_agent,
+    preview_environment_import as core_preview_environment_import,
     remote_add_source as core_remote_add_source,
     remote_environment_snapshot as core_remote_environment_snapshot,
     remote_import_skill as core_remote_import_skill,
@@ -23,12 +26,14 @@ use skills_hub_core::{
     remote_list_sources as core_remote_list_sources,
     remote_remove_skill as core_remote_remove_skill,
     remote_remove_source as core_remote_remove_source, remote_scan as core_remote_scan,
+    remote_scan_cached_source as core_remote_scan_cached_source,
     remote_scan_source as core_remote_scan_source,
     remote_sync_local_agent_skill as core_remote_sync_local_agent_skill, remote_sync_plan,
     remote_sync_skill as core_remote_sync_skill, remove_agent as core_remove_agent,
     remove_agent_skill as core_remove_agent_skill, remove_hub_skill as core_remove_hub_skill,
     remove_remote as core_remove_remote, remove_source as core_remove_source, run_remote_sync,
-    scan_all as core_scan_all, scan_source as core_scan_source, sync_agents as core_sync_agents,
+    scan_all as core_scan_all, scan_cached_source as core_scan_cached_source,
+    scan_source as core_scan_source, sync_agents as core_sync_agents,
     takeover_agent_skill as core_takeover_agent_skill,
     transfer_environment_skill as core_transfer_environment_skill,
     trash_environment_skill as core_trash_environment_skill, unlink_skill as core_unlink_skill,
@@ -234,6 +239,25 @@ struct EnvironmentSkillInput {
 struct TrashEnvironmentSkillInput {
     environment_id: String,
     skill_name: String,
+    dry_run: Option<bool>,
+}
+
+/// 本机文件夹或 ZIP 导入预览输入。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewEnvironmentImportInput {
+    environment_id: String,
+    source_path: String,
+}
+
+/// 把一次性导入来源中的选中 Skill 写入当前环境。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportEnvironmentSkillsInput {
+    environment_id: String,
+    source_path: String,
+    skill_ids: Vec<String>,
+    force: Option<bool>,
     dry_run: Option<bool>,
 }
 
@@ -592,6 +616,42 @@ async fn trash_environment_skill(
 }
 
 #[tauri::command]
+async fn preview_environment_import(
+    input: PreviewEnvironmentImportInput,
+) -> Result<serde_json::Value, String> {
+    run_blocking(move || {
+        let message = format!("预览 Skill 导入：{}", input.source_path);
+        log_command("skill.import.preview", &message, || {
+            core_preview_environment_import(&input.environment_id, &input.source_path)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn import_environment_skills(
+    input: ImportEnvironmentSkillsInput,
+) -> Result<serde_json::Value, String> {
+    run_blocking(move || {
+        let message = format!(
+            "导入 {} 个 Skill 到环境 {}",
+            input.skill_ids.len(),
+            input.environment_id
+        );
+        log_command("skill.import", &message, || {
+            core_import_environment_skills(
+                &input.environment_id,
+                &input.source_path,
+                &input.skill_ids,
+                input.force.unwrap_or(false),
+                input.dry_run.unwrap_or(false),
+            )
+        })
+    })
+    .await
+}
+
+#[tauri::command]
 async fn add_environment_source(
     input: EnvironmentSourceInput,
 ) -> Result<serde_json::Value, String> {
@@ -659,6 +719,23 @@ async fn scan_environment_source(
 }
 
 #[tauri::command]
+async fn get_environment_source_cache(
+    input: EnvironmentSourceRefInput,
+) -> Result<serde_json::Value, String> {
+    run_blocking(move || {
+        let environment = core_get_environment(&input.environment_id).map_err(to_error)?;
+        match environment.kind {
+            EnvironmentKind::Local => to_value(core_scan_cached_source(&input.source_ref)),
+            EnvironmentKind::Remote => to_value(core_remote_scan_cached_source(
+                &environment.name,
+                &input.source_ref,
+            )),
+        }
+    })
+    .await
+}
+
+#[tauri::command]
 async fn install_environment_source(
     input: InstallEnvironmentSourceInput,
 ) -> Result<serde_json::Value, String> {
@@ -672,7 +749,7 @@ async fn install_environment_source(
         };
         match environment.kind {
             EnvironmentKind::Local => {
-                to_value(core_install_from_source(&input.source_ref, options))
+                to_value(core_install_from_cached_source(&input.source_ref, options))
             }
             EnvironmentKind::Remote => to_value(core_remote_install_from_source(
                 &environment.name,
@@ -1157,6 +1234,7 @@ async fn get_logs_dir() -> Result<String, String> {
 /// 启动 Tauri 应用。
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             init_hub,
             list_environments,
@@ -1168,8 +1246,11 @@ pub fn run() {
             unlink_environment_skill,
             takeover_environment_skill,
             trash_environment_skill,
+            preview_environment_import,
+            import_environment_skills,
             add_environment_source,
             remove_environment_source,
+            get_environment_source_cache,
             scan_environment_source,
             install_environment_source,
             list_sources,

@@ -697,6 +697,18 @@ pub fn remote_scan_source(name: &str, source_ref: &str, dry_run: bool) -> Result
     )
 }
 
+/// 读取 SSH 环境中已经存在的来源缓存，不执行远端 Git 网络更新。
+pub fn remote_scan_cached_source(name: &str, source_ref: &str) -> Result<Option<SourceScanResult>> {
+    let remote = get_remote(name)?;
+    run_remote_source_helper(
+        &remote,
+        serde_json::json!({
+            "op": "cached-scan",
+            "source_ref": source_ref,
+        }),
+    )
+}
+
 /// 从 SSH 环境自己的来源安装 Skill 到该环境 Hub。
 pub fn remote_install_from_source(
     name: &str,
@@ -773,18 +785,21 @@ def run_git(args, cwd=None):
         raise RuntimeError(result.stderr.strip() or 'git command failed')
     return result.stdout.strip()
 
-def prepare_source(source):
+def prepare_source(source, refresh=True):
     expanded = os.path.expanduser(source['url'])
     if os.path.isdir(expanded):
         return os.path.realpath(expanded)
     root = os.path.join(cache_root, source['id'])
     branch = source.get('branch')
     if os.path.isdir(os.path.join(root, '.git')):
-        run_git(['fetch', '--prune'], root)
-        if branch:
-            run_git(['checkout', branch], root)
-        run_git(['pull', '--ff-only'], root)
+        if refresh:
+            run_git(['fetch', '--prune'], root)
+            if branch:
+                run_git(['checkout', branch], root)
+            run_git(['pull', '--ff-only'], root)
     else:
+        if not refresh:
+            return None
         os.makedirs(cache_root, exist_ok=True)
         args = ['clone', '--depth', '1']
         if branch:
@@ -817,8 +832,10 @@ def parse_skill(root, current):
         'hub_path': os.path.join(hub_root, dir_name),
     }
 
-def scan_source(config, source, persist):
-    root = prepare_source(source)
+def scan_source(config, source, persist, refresh=True):
+    root = prepare_source(source, refresh)
+    if root is None:
+        return None
     skills = []
     for current, dirs, files in os.walk(root):
         dirs[:] = [item for item in dirs if not item.startswith('.')]
@@ -828,17 +845,18 @@ def scan_source(config, source, persist):
                 skills.append(item)
             dirs[:] = []
     skills.sort(key=lambda item: item['name'].lower())
-    source['skill_count'] = len(skills)
-    source['last_scan_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    source['last_commit'] = None
-    if os.path.isdir(os.path.join(root, '.git')):
-        try:
-            source['last_commit'] = run_git(['rev-parse', 'HEAD'], root)
-        except Exception:
-            pass
-    if persist:
-        config['sources'][source['id']] = source
-        save_config(config)
+    if refresh:
+        source['skill_count'] = len(skills)
+        source['last_scan_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        source['last_commit'] = None
+        if os.path.isdir(os.path.join(root, '.git')):
+            try:
+                source['last_commit'] = run_git(['rev-parse', 'HEAD'], root)
+            except Exception:
+                pass
+        if persist:
+            config['sources'][source['id']] = source
+            save_config(config)
     return {'source': source, 'root': root, 'skills': skills}
 
 config = load_config()
@@ -866,11 +884,21 @@ elif op == 'remove':
     if result is not None and not dry_run:
         del config['sources'][payload['source_ref']]
         save_config(config)
-elif op in ('scan', 'install'):
+elif op in ('scan', 'cached-scan', 'install'):
     source_ref = payload['source_ref']
     if source_ref not in config['sources']:
         raise RuntimeError('source not found: ' + source_ref)
-    scan = scan_source(config, dict(config['sources'][source_ref]), not dry_run)
+    source = dict(config['sources'][source_ref])
+    if op == 'cached-scan':
+        result = scan_source(config, source, False, False)
+        print(json.dumps(result, ensure_ascii=False))
+        raise SystemExit(0)
+    if op == 'scan':
+        scan = scan_source(config, source, not dry_run, True)
+    else:
+        scan = scan_source(config, source, False, False)
+        if scan is None:
+            scan = scan_source(config, source, not dry_run, True)
     if op == 'scan':
         result = scan
     else:

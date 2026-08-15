@@ -2,7 +2,7 @@ use crate::{
     copy_dir, list_remotes, load_config, remote_scan_hub, safe_skill_dir_name, scan_skill_root,
     unlink_skill, EnvironmentKind::Local, RemoteHost, REMOTE_HUB_DIR, REMOTE_HUB_SHELL_DIR,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -282,7 +282,7 @@ pub fn trash_environment_skill(
 ) -> Result<EnvironmentTrashResult> {
     let environment = get_environment(environment_id)?;
     let dir_name = safe_skill_dir_name(skill_name)?;
-    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f").to_string();
 
     let trash_path = match environment.kind {
         Local => {
@@ -466,6 +466,16 @@ fn prepare_environment_target(
     skill_name: &str,
     force: bool,
 ) -> Result<Option<String>> {
+    prepare_environment_target_for(environment, skill_name, force, "transfers")
+}
+
+/// 为一次环境写入准备目标位置；覆盖时把旧内容移动到指定备份分类。
+pub(crate) fn prepare_environment_target_for(
+    environment: &EnvironmentSummary,
+    skill_name: &str,
+    force: bool,
+    backup_category: &str,
+) -> Result<Option<String>> {
     if !force {
         return Ok(None);
     }
@@ -474,12 +484,12 @@ fn prepare_environment_target(
         Local => {
             let config = load_config()?;
             let target = config.hub_dir.join(skill_name);
-            if !target.exists() {
+            if target.symlink_metadata().is_err() {
                 return Ok(None);
             }
             let backup = config
                 .backups_dir
-                .join("transfers")
+                .join(backup_category)
                 .join(timestamp)
                 .join(skill_name);
             if let Some(parent) = backup.parent() {
@@ -490,8 +500,9 @@ fn prepare_environment_target(
         }
         EnvironmentKind::Remote => {
             let target = format!("{REMOTE_HUB_SHELL_DIR}/{skill_name}");
-            let backup =
-                format!("$HOME/.config/skills-hub/backups/transfers/{timestamp}/{skill_name}");
+            let backup = format!(
+                "$HOME/.config/skills-hub/backups/{backup_category}/{timestamp}/{skill_name}"
+            );
             let script = format!(
                 "if [ -e \"{target}\" ] || [ -L \"{target}\" ]; then mkdir -p \"$(dirname \"{backup}\")\"; mv \"{target}\" \"{backup}\"; printf '%s' \"{backup}\"; fi"
             );
@@ -501,7 +512,30 @@ fn prepare_environment_target(
     }
 }
 
-fn write_environment_skill(
+/// 判断环境 Hub 的目标目录名是否已经被任意文件、目录或符号链接占用。
+pub(crate) fn environment_skill_target_exists(
+    environment: &EnvironmentSummary,
+    skill_name: &str,
+) -> Result<bool> {
+    match environment.kind {
+        Local => Ok(load_config()?
+            .hub_dir
+            .join(skill_name)
+            .symlink_metadata()
+            .is_ok()),
+        EnvironmentKind::Remote => {
+            let output = run_environment_ssh(
+                environment,
+                &format!(
+                    "if [ -e \"{REMOTE_HUB_SHELL_DIR}/{skill_name}\" ] || [ -L \"{REMOTE_HUB_SHELL_DIR}/{skill_name}\" ]; then printf 1; else printf 0; fi"
+                ),
+            )?;
+            Ok(output == "1")
+        }
+    }
+}
+
+pub(crate) fn write_environment_skill(
     environment: &EnvironmentSummary,
     skill_name: &str,
     staged: &Path,
@@ -509,10 +543,29 @@ fn write_environment_skill(
     match environment.kind {
         Local => {
             let config = load_config()?;
-            copy_dir(staged, config.hub_dir.join(skill_name), false)
+            let target = config.hub_dir.join(skill_name);
+            fs::create_dir(&target).with_context(|| {
+                format!("reserve environment skill target {}", target.display())
+            })?;
+            if let Err(error) = copy_dir(staged, &target, false) {
+                let cleanup = fs::remove_dir_all(&target);
+                return match cleanup {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(error.context(format!(
+                        "cleanup partial target {} also failed: {cleanup_error}",
+                        target.display()
+                    ))),
+                };
+            }
+            Ok(())
         }
         EnvironmentKind::Remote => {
-            run_environment_ssh(environment, &format!("mkdir -p \"{REMOTE_HUB_SHELL_DIR}\""))?;
+            run_environment_ssh(
+                environment,
+                &format!(
+                    "mkdir -p \"{REMOTE_HUB_SHELL_DIR}\" && mkdir \"{REMOTE_HUB_SHELL_DIR}/{skill_name}\""
+                ),
+            )?;
             let mut command = Command::new("rsync");
             command.arg("-az");
             add_rsync_port(&mut command, environment);
@@ -521,7 +574,53 @@ fn write_environment_skill(
                 "{}:{REMOTE_HUB_DIR}/{skill_name}/",
                 environment_remote_spec(environment)?
             ));
-            run_checked(command, "upload remote skill")
+            if let Err(error) = run_checked(command, "upload remote skill") {
+                let cleanup = run_environment_ssh(
+                    environment,
+                    &format!("rm -rf \"{REMOTE_HUB_SHELL_DIR}/{skill_name}\""),
+                );
+                return match cleanup {
+                    Ok(_) => Err(error),
+                    Err(cleanup_error) => Err(error.context(format!(
+                        "cleanup partial remote target also failed: {cleanup_error}"
+                    ))),
+                };
+            }
+            Ok(())
+        }
+    }
+}
+
+/// 清理失败写入并恢复覆盖前的备份；用于需要回滚保护的新导入流程。
+pub(crate) fn rollback_environment_target(
+    environment: &EnvironmentSummary,
+    skill_name: &str,
+    backup_path: Option<&str>,
+) -> Result<()> {
+    match environment.kind {
+        Local => {
+            let config = load_config()?;
+            let target = config.hub_dir.join(skill_name);
+            if target.symlink_metadata().is_ok() {
+                return Err(anyhow!(
+                    "refuse to restore backup over existing target: {}",
+                    target.display()
+                ));
+            }
+            if let Some(backup_path) = backup_path {
+                fs::rename(backup_path, target)?;
+            }
+            Ok(())
+        }
+        EnvironmentKind::Remote => {
+            let backup_script = backup_path
+                .map(|backup| {
+                    format!(
+                        "if [ -e \"{REMOTE_HUB_SHELL_DIR}/{skill_name}\" ] || [ -L \"{REMOTE_HUB_SHELL_DIR}/{skill_name}\" ]; then echo 'refuse to restore backup over existing target' >&2; exit 3; fi; if [ -e \"{backup}\" ] || [ -L \"{backup}\" ]; then mv \"{backup}\" \"{REMOTE_HUB_SHELL_DIR}/{skill_name}\"; fi"
+                    )
+                })
+                .unwrap_or_default();
+            run_environment_ssh(environment, &backup_script).map(|_| ())
         }
     }
 }

@@ -1,5 +1,5 @@
-import { ClaudeCode, Cloudflare, Codex, Cursor, Github, HermesAgent, OpenClaw, Qoder, Trae, Windsurf } from "@lobehub/icons";
-import { Bot, Cloud, GitBranch } from "lucide-react";
+import { ClaudeCode, Codex, Cursor, Github, HermesAgent, OpenClaw, Qoder, Trae, Windsurf } from "@lobehub/icons";
+import { Bot, Cloud, FolderOpen, GitBranch, Globe } from "lucide-react";
 import gitlabIcon from "@/assets/icons/gitlab.svg";
 import type { AgentKind } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -33,9 +33,10 @@ function LocalImageIcon({ src, alt, size = 18, className }: { src: string; alt: 
 
 export function SourceIcon({ kind, className }: { kind: string; className?: string }) {
   const normalized = kind.toLowerCase();
-  if (normalized.includes("github")) return <LobeAvatar Icon={Github} size={18} className={className} />;
-  if (normalized.includes("gitlab")) return <LocalImageIcon src={gitlabIcon} alt="GitLab" className={className} />;
-  if (normalized.includes("git")) return <GitBranch className={cn("h-[18px] w-[18px] shrink-0 text-[#F05032]", className)} />;
+  if (normalized === "github") return <LobeAvatar Icon={Github} size={18} className={className} />;
+  if (normalized === "gitlab") return <LocalImageIcon src={gitlabIcon} alt="GitLab" className={className} />;
+  if (normalized === "generic-git") return <GitBranch className={cn("h-[18px] w-[18px] shrink-0 text-[#F05032]", className)} />;
+  if (normalized === "local") return <FolderOpen className={cn("h-[18px] w-[18px] shrink-0 text-blue-500", className)} />;
   return <Cloud className={cn("h-[18px] w-[18px] shrink-0 text-blue-500", className)} />;
 }
 
@@ -46,7 +47,7 @@ export function AgentIcon({ agent, className, size = 14 }: { agent: AgentKind; c
 }
 
 export function RemoteIcon({ className, size = 16 }: { className?: string; size?: number }) {
-  return <LobeMark Icon={Cloudflare.Color ?? Cloudflare.Avatar ?? Cloudflare} size={size} className={className} />;
+  return <Globe size={size} className={cn("shrink-0", className)} aria-hidden="true" />;
 }
 
 export function StatusDot({ tone, spinning = false }: { tone: "success" | "danger" | "muted" | "info"; spinning?: boolean }) {

@@ -123,11 +123,45 @@ pub fn scan_source(source_ref: &str, dry_run: bool) -> Result<SourceScanResult> 
     })
 }
 
+/// 只读取已经存在的 source 缓存，不执行 Git fetch/pull。
+///
+/// GUI 用它实现 stale-while-revalidate：先展示上次缓存，再在后台调用 `scan_source` 更新。
+pub fn scan_cached_source(source_ref: &str) -> Result<Option<SourceScanResult>> {
+    let config = load_config()?;
+    let source = resolve_source(&config, source_ref)?;
+    let Some(root) = cached_source_root(&config, &source) else {
+        return Ok(None);
+    };
+    let skills = discovered_from_root(&config, &root)?;
+    Ok(Some(SourceScanResult {
+        source,
+        root,
+        skills,
+    }))
+}
+
 /// 从 source 选择性安装 skill 到 hub。
 ///
 /// 这里是最关键的“repo 预览后选择安装”能力：CLI/GUI 先 scan，再把用户选择传进来。
 pub fn install_from_source(source_ref: &str, options: InstallOptions) -> Result<InstallResult> {
     let scan = scan_source(source_ref, options.dry_run)?;
+    install_from_scan(scan, options)
+}
+
+/// 从 GUI 已经展示的本地缓存安装，避免点击安装时再次访问网络。
+/// 缓存不存在时回退到完整扫描，保持首次使用可用。
+pub fn install_from_cached_source(
+    source_ref: &str,
+    options: InstallOptions,
+) -> Result<InstallResult> {
+    let scan = match scan_cached_source(source_ref)? {
+        Some(scan) => scan,
+        None => scan_source(source_ref, options.dry_run)?,
+    };
+    install_from_scan(scan, options)
+}
+
+fn install_from_scan(scan: SourceScanResult, options: InstallOptions) -> Result<InstallResult> {
     let selected = select_skills(&scan.skills, &options)?;
     let mut installed = Vec::new();
     let mut skipped = Vec::new();
@@ -175,6 +209,15 @@ fn prepare_source_root(config: &HubConfig, source: &SkillSource) -> Result<PathB
     clone_or_update_repo(&source.url, source.branch.as_deref(), &cache_dir)
         .with_context(|| format!("prepare source {}", source.id))?;
     Ok(cache_dir)
+}
+
+fn cached_source_root(config: &HubConfig, source: &SkillSource) -> Option<PathBuf> {
+    if source.kind == SourceKind::Local || Path::new(&source.url).exists() {
+        let root = expand_path(&source.url);
+        return root.exists().then_some(root);
+    }
+    let root = config.cache_dir.join(&source.id);
+    root.exists().then_some(root)
 }
 
 fn discovered_from_root(config: &HubConfig, root: &Path) -> Result<Vec<DiscoveredSkill>> {

@@ -1,7 +1,8 @@
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { memo, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { isTauri } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ChevronRight,
@@ -11,7 +12,6 @@ import {
   Cloud,
   ExternalLink,
   FolderOpen,
-  GitBranch,
   Loader2,
   Moon,
   Pencil,
@@ -21,6 +21,7 @@ import {
   Save,
   Sun,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -30,6 +31,8 @@ import {
   type HubConfig,
   type EnvironmentSnapshot,
   type EnvironmentSummary,
+  type SkillImportPreview,
+  type SourceScanResult,
   type SkillSource,
   type SyncMethod,
 } from "@/lib/api";
@@ -38,10 +41,17 @@ import { AppSidebar, type Page } from "@/components/app-sidebar";
 import { EmptyState, PageError, PageLoading, PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  DetailDrawer,
+  DetailDrawerCloseButton,
+  DetailDrawerContent,
+  DetailDrawerDescription,
+  DetailDrawerTitle,
+} from "@/components/ui/detail-drawer";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { AgentIcon } from "@/lib/brand";
+import { AgentIcon, SourceIcon } from "@/lib/brand";
 import { useToast } from "@/lib/toast";
 import { useEnvironmentSnapshot } from "@/hooks/use-environment-snapshot";
 import {
@@ -85,6 +95,23 @@ function updateSnapshotAgentStatus(
 
 function configuredAgentLabel(agent: AgentKind, config?: HubConfig) {
   return config?.agents?.[agent]?.label ?? agent;
+}
+
+function formatSourceScanTime(value?: string | null) {
+  if (!value) return "尚未更新";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "更新时间未知";
+  const elapsed = Math.max(0, Date.now() - timestamp);
+  if (elapsed < 60_000) return "刚刚";
+  if (elapsed < 60 * 60_000) return `${Math.floor(elapsed / 60_000)} 分钟前`;
+  if (elapsed < 24 * 60 * 60_000) return `${Math.floor(elapsed / (60 * 60_000))} 小时前`;
+  if (elapsed < 7 * 24 * 60 * 60_000) return `${Math.floor(elapsed / (24 * 60 * 60_000))} 天前`;
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(timestamp));
 }
 
 const statusLabels: Record<string, string> = {
@@ -153,6 +180,7 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   const [agentFilter, setAgentFilter] = useState<AgentKind | "all">("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const snapshot = useEnvironmentSnapshot(environment.id);
@@ -256,6 +284,11 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
     }
     skillMutation.mutate({ skillName, agent, status });
   };
+  const closeSkillDrawer = () => {
+    const skillName = selectedSkillName;
+    setSelectedSkillName(null);
+    if (skillName) restoreFocusToItem("data-skill-id", skillName);
+  };
   const trashMutation = useMutation({
     mutationFn: (skillName: string) => api.trashEnvironmentSkill({ environmentId: environment.id, skillName }),
     onMutate: (skillName) => showToast({ tone: "loading", title: "正在移入回收站", description: skillName }),
@@ -280,6 +313,7 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   }
 
   const capabilitiesReady = environment.kind === "local" || (snapshot.data.capabilities.ssh && snapshot.data.capabilities.python3);
+  const canImport = environment.kind === "local" || (capabilitiesReady && snapshot.data.capabilities.rsync);
   return (
     <PageShell
       title="技能"
@@ -288,6 +322,14 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
       transitioning={snapshot.isPlaceholderData}
       actions={
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => setImportOpen(true)}
+            disabled={!canImport}
+            title={canImport ? "从文件夹或 ZIP 添加 Skill" : "SSH 环境需要 Python3 和 rsync 才能接收本机 Skill"}
+          >
+            <Plus className="h-3.5 w-3.5" /> 添加 Skill
+          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -401,21 +443,26 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
           </div>
         )}
       </section>
-      <AnimatePresence>
-        {selectedSkill && (
-          <SkillDrawer
-            row={selectedSkill}
-            snapshot={snapshot.data}
-            onClose={() => setSelectedSkillName(null)}
-            onAgentAction={(agent, status) => handleAgentAction(selectedSkill.name, agent, status)}
-            onTrash={() => trashMutation.mutate(selectedSkill.name)}
-            trashing={trashMutation.isPending}
-            agents={agents}
-            agentLabels={agentLabels}
-          />
-        )}
-      </AnimatePresence>
+      {selectedSkill && (
+        <SkillDrawer
+          row={selectedSkill}
+          snapshot={snapshot.data}
+          onClose={closeSkillDrawer}
+          onAgentAction={(agent, status) => handleAgentAction(selectedSkill.name, agent, status)}
+          onTrash={() => trashMutation.mutate(selectedSkill.name)}
+          trashing={trashMutation.isPending}
+          agents={agents}
+          agentLabels={agentLabels}
+        />
+      )}
       <TransferDialog open={transferOpen} onOpenChange={setTransferOpen} source={environment} environments={environments} />
+      <ImportSkillDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        environment={environment}
+        agents={agents}
+        agentLabels={agentLabels}
+      />
     </PageShell>
   );
 }
@@ -437,7 +484,7 @@ const SkillRow = memo(function SkillRow({
 }) {
   return (
     <div className="skill-row">
-      <button className="skill-row-main" onClick={onOpen}>
+      <button className="skill-row-main" data-skill-id={row.name} onClick={onOpen}>
         <div className="min-w-0">
           <div className="skill-row-title">
             <span className="truncate">{row.displayName}</span>
@@ -496,64 +543,50 @@ function SkillDrawer({
   agents: AgentKind[];
   agentLabels: Record<string, string>;
 }) {
-  const reduceMotion = useReducedMotion();
   const [trashOpen, setTrashOpen] = useState(false);
   const skill = snapshot.hub.find((item) => (item.dirName ?? item.dir_name ?? item.name) === row.name);
   return (
     <>
-      <motion.button
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: reduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
-        className="drawer-overlay"
-        aria-label="关闭详情"
-        onClick={onClose}
-      />
-      <motion.aside
-        initial={{ opacity: reduceMotion ? 0 : 1, transform: reduceMotion ? "none" : "translateX(100%)" }}
-        animate={{ opacity: 1, transform: "translateX(0%)" }}
-        exit={{ opacity: reduceMotion ? 0 : 1, transform: reduceMotion ? "none" : "translateX(100%)" }}
-        transition={{ duration: reduceMotion ? 0.12 : 0.22, ease: [0.32, 0.72, 0, 1] }}
-        className="skill-drawer"
-      >
-        <div className="drawer-header">
-          <div className="min-w-0">
-            <div className="drawer-kicker">SKILL</div>
-            <h2 className="truncate text-lg font-semibold">{row.displayName}</h2>
-            <div className="muted-path">{skill?.path ?? row.path}</div>
+      <DetailDrawer open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DetailDrawerContent>
+          <div className="drawer-header">
+            <div className="min-w-0">
+              <div className="drawer-kicker">SKILL</div>
+              <DetailDrawerTitle>{row.displayName}</DetailDrawerTitle>
+              <DetailDrawerDescription>{skill?.path ?? row.path}</DetailDrawerDescription>
+            </div>
+            <DetailDrawerCloseButton />
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="关闭"><X className="h-4 w-4" /></button>
-        </div>
-        <div className="drawer-body">
-          <p className="text-sm leading-6 text-muted-foreground">{row.description || "暂无描述"}</p>
-          <div className="drawer-section">
-            <div className="drawer-section-title">Agent 状态</div>
-            <div className="drawer-status-list">
-              {agents.map((agent) => {
-                const status = agentStatus(row, agent);
-                return (
-                  <button key={agent} className="drawer-status-row" onClick={() => onAgentAction(agent, status)}>
-                    <span className="flex items-center gap-2"><AgentIcon agent={agent} size={15} /> {agentLabels[agent]}</span>
-                    <span className={cn("status-text", status === "conflict" && "status-text-danger")}>{status === "conflict" ? "备份并接管" : statusLabels[status] ?? status}</span>
-                  </button>
-                );
-              })}
+          <div className="drawer-body">
+            <p className="text-sm leading-6 text-muted-foreground">{row.description || "暂无描述"}</p>
+            <div className="drawer-section">
+              <div className="drawer-section-title">Agent 状态</div>
+              <div className="drawer-status-list">
+                {agents.map((agent) => {
+                  const status = agentStatus(row, agent);
+                  return (
+                    <button key={agent} className="drawer-status-row" onClick={() => onAgentAction(agent, status)}>
+                      <span className="flex items-center gap-2"><AgentIcon agent={agent} size={15} /> {agentLabels[agent]}</span>
+                      <span className={cn("status-text", status === "conflict" && "status-text-danger")}>{status === "conflict" ? "备份并接管" : statusLabels[status] ?? status}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="drawer-section">
+              <div className="drawer-section-title">文件位置</div>
+              <button className="path-button" onClick={() => skill?.path && void api.openPath(skill.path)}>
+                <FolderOpen className="h-4 w-4" /> <span className="truncate">{skill?.path ?? row.path}</span> <ExternalLink className="ml-auto h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="drawer-section drawer-danger-section">
+              <div className="drawer-section-title">移除 Skill</div>
+              <p className="mb-3 text-xs leading-5 text-muted-foreground">从当前环境移除，但不物理删除；内容会保存在 skills-hub 回收区中。</p>
+              <Button variant="destructive" size="sm" onClick={() => setTrashOpen(true)}><Trash2 className="h-3.5 w-3.5" /> 移入回收站</Button>
             </div>
           </div>
-          <div className="drawer-section">
-            <div className="drawer-section-title">文件位置</div>
-            <button className="path-button" onClick={() => skill?.path && void api.openPath(skill.path)}>
-              <FolderOpen className="h-4 w-4" /> <span className="truncate">{skill?.path ?? row.path}</span> <ExternalLink className="ml-auto h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className="drawer-section drawer-danger-section">
-            <div className="drawer-section-title">移除 Skill</div>
-            <p className="mb-3 text-xs leading-5 text-muted-foreground">从当前环境移除，但不物理删除；内容会保存在 skills-hub 回收区中。</p>
-            <Button variant="destructive" size="sm" onClick={() => setTrashOpen(true)}><Trash2 className="h-3.5 w-3.5" /> 移入回收站</Button>
-          </div>
-        </div>
-      </motion.aside>
+        </DetailDrawerContent>
+      </DetailDrawer>
       <Dialog open={trashOpen} onOpenChange={setTrashOpen}>
         <DialogContent>
           <DialogHeader>
@@ -662,6 +695,269 @@ function TransferDialog({
   );
 }
 
+async function chooseSkillImportFolder() {
+  if (!isTauri()) {
+    return "/mock/shared-skills";
+  }
+  const selected = await openDialog({
+    title: "选择 Skill 文件夹",
+    directory: true,
+    multiple: false,
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+function ImportSkillDialog({
+  open,
+  onOpenChange,
+  environment,
+  agents,
+  agentLabels,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  environment: EnvironmentSummary;
+  agents: AgentKind[];
+  agentLabels: Record<string, string>;
+}) {
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
+  const [preview, setPreview] = useState<SkillImportPreview | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [selectedAgents, setSelectedAgents] = useState<AgentKind[]>([]);
+
+  const previewMutation = useMutation({
+    mutationFn: (sourcePath: string) => api.previewEnvironmentImport({ environmentId: environment.id, sourcePath }),
+    onSuccess: (result) => {
+      setPreview(result);
+      setSelected(result.skills.filter((skill) => skill.status !== "invalid").map((skill) => skill.id));
+    },
+    onError: (error) => showToast({ tone: "error", title: "无法读取导入内容", description: getErrorMessage(error) }),
+  });
+  const importMutation = useMutation({
+    mutationFn: async (force: boolean) => {
+      const result = await api.importEnvironmentSkills({
+        environmentId: environment.id,
+        sourcePath: preview?.sourcePath ?? "",
+        skillIds: selected,
+        force,
+      });
+      const imported = result.items.filter((item) => item.status === "imported");
+      const syncResults = selectedAgents.length
+        ? await Promise.allSettled(imported.map((item) => api.linkEnvironmentSkill({
+            environmentId: environment.id,
+            skillName: item.skillName,
+            tools: selectedAgents,
+          })))
+        : [];
+      return {
+        result,
+        syncFailures: syncResults.filter((item) => item.status === "rejected").length,
+      };
+    },
+    onSuccess: async ({ result, syncFailures }) => {
+      const imported = result.items.filter((item) => item.status === "imported").length;
+      const conflicts = result.items.filter((item) => item.status === "conflict").length;
+      const hasWarnings = conflicts > 0 || syncFailures > 0;
+      const syncDescription = selectedAgents.length
+        ? syncFailures
+          ? `；${syncFailures} 个 Skill 未能完成 Agent 同步`
+          : `，并同步到 ${selectedAgents.length} 个 Agent`
+        : "";
+      showToast({
+        tone: hasWarnings ? "error" : "success",
+        title: syncFailures ? "Skill 已添加，同步未全部完成" : conflicts ? "Skill 已添加，部分同名项被跳过" : "Skill 添加完成",
+        description: `已添加 ${imported} 个${conflicts ? `，跳过 ${conflicts} 个同名 Skill` : ""}${syncDescription}。`,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] });
+      onOpenChange(false);
+    },
+    onError: (error) => showToast({ tone: "error", title: "Skill 添加失败", description: getErrorMessage(error) }),
+  });
+
+  useEffect(() => {
+    if (open) return;
+    setPreview(null);
+    setSelected([]);
+    setPicking(false);
+    setDragActive(false);
+    setSelectedAgents([]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !isTauri()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow().onDragDropEvent((event) => {
+      if (event.payload.type === "over") {
+        setDragActive(true);
+        return;
+      }
+      setDragActive(false);
+      if (event.payload.type !== "drop") return;
+      if (event.payload.paths.length !== 1) {
+        showToast({ tone: "error", title: "请一次拖入一个文件夹或 ZIP" });
+        return;
+      }
+      previewMutation.mutate(event.payload.paths[0]);
+    }).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [open]);
+
+  const pickSource = async () => {
+    setPicking(true);
+    try {
+      const sourcePath = await chooseSkillImportFolder();
+      if (sourcePath) previewMutation.mutate(sourcePath);
+    } catch (error) {
+      showToast({ tone: "error", title: "无法打开文件选择器", description: getErrorMessage(error) });
+    } finally {
+      setPicking(false);
+    }
+  };
+  const selectable = preview?.skills.filter((skill) => skill.status !== "invalid") ?? [];
+  const selectedCandidates = selectable.filter((skill) => selected.includes(skill.id));
+  const selectedConflicts = selectedCandidates.filter((skill) => skill.status === "conflict").length;
+  const toggleSkill = (skillId: string) => {
+    setSelected((current) => current.includes(skillId) ? current.filter((item) => item !== skillId) : [...current, skillId]);
+  };
+  const toggleAgent = (agent: AgentKind) => {
+    setSelectedAgents((current) => current.includes(agent) ? current.filter((item) => item !== agent) : [...current, agent]);
+  };
+  const resetSource = () => {
+    setPreview(null);
+    setSelected([]);
+    previewMutation.reset();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="import-skill-dialog">
+        <DialogHeader>
+          <DialogTitle>添加 Skill</DialogTitle>
+          <DialogDescription>从本机文件夹或 ZIP 添加到“{environment.name}”的 Hub；添加后可再选择同步到 Agent。</DialogDescription>
+        </DialogHeader>
+        {!preview && !previewMutation.isPending && (
+          <button className={cn("import-dropzone", dragActive && "import-dropzone-active")} onClick={() => void pickSource()} disabled={picking}>
+            <span className="import-dropzone-icon">
+              {picking ? <Loader2 className="h-6 w-6 animate-spin" /> : dragActive ? <Upload className="h-6 w-6" /> : <FolderOpen className="h-6 w-6" />}
+            </span>
+            <strong>{dragActive ? "松开即可扫描" : "拖入 Skill 文件夹或 ZIP"}</strong>
+            <span className="import-dropzone-description">也可以点击这里选择文件夹，系统会自动扫描其中的 Skill</span>
+          </button>
+        )}
+        {previewMutation.isPending && <PageLoading compact label="正在安全扫描 Skill…" />}
+        {preview && (
+          <div className="import-preview">
+            <div className="import-preview-toolbar">
+              <div className="min-w-0">
+                <div className="section-title">发现 {preview.skills.length} 个 Skill</div>
+                <div className="section-caption truncate" title={preview.sourcePath}>{preview.sourcePath}</div>
+              </div>
+              <Button variant="secondary" size="sm" onClick={resetSource} disabled={importMutation.isPending}>重新选择</Button>
+            </div>
+            <div className="import-preview-body">
+              <div className="import-skill-list">
+                {preview.skills.map((skill) => {
+                  const disabled = skill.status === "invalid";
+                  const checked = selected.includes(skill.id);
+                  return (
+                    <label key={skill.id} className={cn("import-skill-row", disabled && "import-skill-row-disabled")}>
+                      <input type="checkbox" checked={checked} disabled={disabled || importMutation.isPending} onChange={() => toggleSkill(skill.id)} />
+                      <div className="import-skill-copy">
+                        <div className="source-name">{skill.name}</div>
+                        <div className="source-scan-description">{skill.description || "暂无描述"}</div>
+                        <div className="muted-path" title={skill.relativePath}>{skill.relativePath}</div>
+                        {skill.reason && <div className="import-skill-reason">{skill.reason}</div>}
+                      </div>
+                      <Badge>{skill.status === "ready" ? "可添加" : skill.status === "conflict" ? "已存在" : "无效"}</Badge>
+                    </label>
+                  );
+                })}
+              </div>
+              <aside className="import-agent-panel">
+                <div className="section-title">添加后同步到</div>
+                <div className="section-caption">不选择则只添加到 Hub</div>
+                <div className="import-agent-grid">
+                  {agents.map((agent) => {
+                    const active = selectedAgents.includes(agent);
+                    return (
+                      <button
+                        key={agent}
+                        type="button"
+                        className={cn("import-agent-option", active && "import-agent-option-active")}
+                        aria-pressed={active}
+                        title={agentLabels[agent]}
+                        disabled={importMutation.isPending}
+                        onClick={() => toggleAgent(agent)}
+                      >
+                        <AgentIcon agent={agent} size={18} />
+                        <span>{agentLabels[agent]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </aside>
+            </div>
+            {selectedConflicts > 0 && (
+              <div className="import-conflict-note">
+                <CircleAlert className="h-4 w-4 shrink-0" />
+                已选择 {selectedConflicts} 个同名 Skill。默认会跳过；选择覆盖时会先备份当前版本。
+              </div>
+            )}
+            <div className="import-dialog-actions">
+              <div className="section-caption">
+                已选择 {selectedCandidates.length} 个 Skill{selectedAgents.length ? ` · ${selectedAgents.length} 个 Agent` : ""}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={importMutation.isPending}>取消</Button>
+                {selectedConflicts > 0 ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      pending={importMutation.isPending && importMutation.variables === false}
+                      pendingLabel="添加中"
+                      disabled={!selected.length || importMutation.isPending}
+                      onClick={() => importMutation.mutate(false)}
+                    >
+                      {selectedAgents.length ? "添加新增并同步" : "仅添加新增"}
+                    </Button>
+                    <Button
+                      pending={importMutation.isPending && importMutation.variables === true}
+                      pendingLabel="覆盖中"
+                      disabled={!selected.length || importMutation.isPending}
+                      onClick={() => importMutation.mutate(true)}
+                    >
+                      {selectedAgents.length ? "覆盖、添加并同步" : "覆盖并备份"}
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    pending={importMutation.isPending}
+                    pendingLabel="添加中"
+                    disabled={!selected.length || importMutation.isPending}
+                    onClick={() => importMutation.mutate(false)}
+                  >
+                    {selectedAgents.length ? `添加并同步到 ${selectedAgents.length} 个 Agent` : `添加 ${selected.length} 个 Skill`}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
@@ -670,6 +966,11 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   const [addOpen, setAddOpen] = useState(false);
   const [selectedSource, setSelectedSource] = useState<string | null>(null);
   const sources = snapshot.data?.sources ?? [];
+  const agents = useMemo(() => snapshot.data?.agents.map((item) => item.agent) ?? [], [snapshot.data?.agents]);
+  const agentLabels = useMemo(
+    () => Object.fromEntries(agents.map((agent) => [agent, configuredAgentLabel(agent, snapshot.data?.config)])),
+    [agents, snapshot.data?.config],
+  );
   const canManageSources = environment.kind === "local" || Boolean(
     snapshot.data?.capabilities.ssh && snapshot.data.capabilities.git && snapshot.data.capabilities.python3,
   );
@@ -687,6 +988,7 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
     onSuccess: async () => {
       showToast({ tone: "success", title: "来源已移除" });
       setSelectedSource(null);
+      requestAnimationFrame(() => document.getElementById("add-source-button")?.focus());
       await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] });
     },
     onError: (error) => showToast({ tone: "error", title: "来源移除失败", description: getErrorMessage(error) }),
@@ -694,8 +996,14 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   useEffect(() => {
     setSelectedSource(null);
   }, [environment.id]);
+  const closeSourceDrawer = () => {
+    const sourceId = selectedSource;
+    setSelectedSource(null);
+    if (sourceId) restoreFocusToItem("data-source-id", sourceId);
+  };
+  const selectedSourceData = sources.find((source) => source.id === selectedSource) ?? null;
   const sourceActions = (
-    <Button size="sm" disabled={!canManageSources || snapshot.isLoading} onClick={() => setAddOpen(true)}>
+    <Button id="add-source-button" size="sm" disabled={!canManageSources || snapshot.isLoading} onClick={() => setAddOpen(true)}>
       <Plus className="h-3.5 w-3.5" /> 添加来源
     </Button>
   );
@@ -733,75 +1041,55 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
       )}
       <section className="workspace-list source-workspace">
         <div className="workspace-list-header"><div><div className="section-title">来源</div><div className="section-caption">{sources.length} 个来源</div></div></div>
-        <motion.div
-          className="source-workspace-body"
-          data-has-scan={Boolean(selectedSource)}
-        >
-          <div className="source-list">
-            <AnimatePresence initial={false} mode="popLayout">
-              {sources.map((source) => {
-                const removing = removeSource.isPending && removeSource.variables === source.id;
-                const selected = selectedSource === source.id;
-                return (
-                  <motion.div
-                    key={source.id}
-                    initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(4px)" }}
-                    animate={{ opacity: 1, transform: "translateY(0px)" }}
-                    exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-4px)" }}
-                    transition={{ duration: reduceMotion ? 0.1 : 0.16, ease: [0.23, 1, 0.32, 1] }}
-                    className={cn("source-row", selected && "source-row-selected")}
-                  >
-                    <span className="source-kind-icon"><SourceIcon kind={source.kind} /></span>
-                    <div className="source-copy">
-                      <div className="source-name" title={source.id}>{source.id}</div>
-                      <div className="muted-path" title={source.url}>{source.url}</div>
-                    </div>
-                    <div className="source-row-actions">
-                      <Badge>{source.kind}</Badge>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        aria-pressed={selected}
-                        onClick={() => setSelectedSource(selected ? null : source.id)}
-                      >
-                        {selected ? "关闭" : "扫描"}
-                      </Button>
-                      <button
-                        className="icon-button"
-                        aria-label={`移除来源 ${source.id}`}
-                        disabled={removeSource.isPending}
-                        onClick={() => removeSource.mutate(source.id)}
-                      >
-                        {removing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                      </button>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-            {!sources.length && (
-              <EmptyState
-                title="还没有来源"
-                description={canManageSources ? "添加 GitHub、GitLab、SSH Git 或目标机器上的本地目录。" : "补齐 Git 和 Python3 后即可添加来源。"}
-              />
-            )}
-          </div>
-          <AnimatePresence initial={false}>
-            {canManageSources && selectedSource && (
-              <motion.div
-                key={selectedSource}
-                initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(6px)" }}
-                animate={{ opacity: 1, transform: "translateY(0px)" }}
-                exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(6px)" }}
-                transition={{ duration: reduceMotion ? 0.12 : 0.18, ease: [0.23, 1, 0.32, 1] }}
-                className="source-scan-pane"
-              >
-                <SourceScanPanel environmentId={environment.id} sourceId={selectedSource} onClose={() => setSelectedSource(null)} />
-              </motion.div>
-            )}
+        <div className="source-list">
+          <AnimatePresence initial={false} mode="popLayout">
+            {sources.map((source) => {
+              const selected = selectedSource === source.id;
+              return (
+                <motion.button
+                  type="button"
+                  key={source.id}
+                  initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(4px)" }}
+                  animate={{ opacity: 1, transform: "translateY(0px)" }}
+                  exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-4px)" }}
+                  transition={{ duration: reduceMotion ? 0.1 : 0.16, ease: [0.23, 1, 0.32, 1] }}
+                  className={cn("source-row", selected && "source-row-selected")}
+                  aria-haspopup="dialog"
+                  data-source-id={source.id}
+                  onClick={() => setSelectedSource(source.id)}
+                >
+                  <span className="source-kind-icon"><SourceIcon kind={source.kind} /></span>
+                  <span className="source-copy">
+                    <span className="source-name" title={source.id}>{source.id}</span>
+                    <span className="muted-path" title={source.url}>{source.url}</span>
+                  </span>
+                  <span className="source-row-trailing">
+                    <Badge>{sourceKindLabel(source.kind)}</Badge>
+                    <ChevronRight className="h-4 w-4" />
+                  </span>
+                </motion.button>
+              );
+            })}
           </AnimatePresence>
-        </motion.div>
+          {!sources.length && (
+            <EmptyState
+              title="还没有来源"
+              description={canManageSources ? "添加 GitHub、GitLab、SSH Git 或目标机器上的本地目录。" : "补齐 Git 和 Python3 后即可添加来源。"}
+            />
+          )}
+        </div>
       </section>
+      {canManageSources && selectedSourceData && (
+        <SourceDrawer
+          environmentId={environment.id}
+          source={selectedSourceData}
+          agents={agents}
+          agentLabels={agentLabels}
+          removing={removeSource.isPending && removeSource.variables === selectedSourceData.id}
+          onClose={closeSourceDrawer}
+          onRemove={() => removeSource.mutate(selectedSourceData.id)}
+        />
+      )}
       {canManageSources && (
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogContent>
@@ -814,96 +1102,248 @@ function SourcesPage({ environment }: { environment: EnvironmentSummary }) {
   );
 }
 
-function SourceScanPanel({ environmentId, sourceId, onClose }: { environmentId: string; sourceId: string; onClose: () => void }) {
+function SourceDrawer({
+  environmentId,
+  source,
+  agents,
+  agentLabels,
+  removing,
+  onClose,
+  onRemove,
+}: {
+  environmentId: string;
+  source: SkillSource;
+  agents: AgentKind[];
+  agentLabels: Record<string, string>;
+  removing: boolean;
+  onClose: () => void;
+  onRemove: () => void;
+}) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const reduceMotion = useReducedMotion();
-  const scan = useQuery({
-    queryKey: ["source-scan", environmentId, sourceId],
-    queryFn: () => api.scanEnvironmentSource({ environmentId, sourceRef: sourceId }),
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [selectedAgents, setSelectedAgents] = useState<AgentKind[]>([]);
+  const autoRefreshSource = useRef<string | null>(null);
+  const cacheQueryKey = ["source-scan-cache", environmentId, source.id] as const;
+  const cachedScan = useQuery({
+    queryKey: cacheQueryKey,
+    queryFn: () => api.getEnvironmentSourceCache({ environmentId, sourceRef: source.id }),
     retry: false,
+    staleTime: Infinity,
   });
-  const install = useMutation({
-    mutationFn: ({ skills, all }: { skills: string[]; all: boolean }) => api.installEnvironmentSource({ environmentId, sourceRef: sourceId, skills, all, force: false }),
+  const refreshScan = useMutation({
+    mutationFn: () => api.scanEnvironmentSource({ environmentId, sourceRef: source.id }),
     onSuccess: async (result) => {
-      showToast({ tone: "success", title: "Skill 安装完成", description: `已安装 ${result.installed.length} 个，跳过 ${result.skipped.length} 个。` });
-      await Promise.all([
-        scan.refetch(),
-        queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environmentId] }),
-      ]);
+      queryClient.setQueryData(cacheQueryKey, result);
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environmentId] });
+    },
+  });
+  useEffect(() => {
+    if (!cachedScan.isFetched || autoRefreshSource.current === source.id) return;
+    autoRefreshSource.current = source.id;
+    const lastScanAt = cachedScan.data?.source.lastScanAt ?? cachedScan.data?.source.last_scan_at;
+    const lastScanTime = lastScanAt ? Date.parse(lastScanAt) : 0;
+    if (!lastScanTime || Date.now() - lastScanTime > 5 * 60_000) refreshScan.mutate();
+  }, [cachedScan.isFetched, source.id]);
+  const install = useMutation({
+    mutationFn: async ({ skills, mode }: { skills: string[]; mode: "single" | "all" }) => {
+      const result = await api.installEnvironmentSource({ environmentId, sourceRef: source.id, skills, all: false, force: false });
+      const syncResults = selectedAgents.length
+        ? await Promise.allSettled(result.installed.map((skill) => api.linkEnvironmentSkill({
+            environmentId,
+            skillName: skill.name,
+            tools: selectedAgents,
+          })))
+        : [];
+      return {
+        mode,
+        result,
+        syncFailures: syncResults.filter((item) => item.status === "rejected").length,
+      };
+    },
+    onSuccess: async ({ result, syncFailures }) => {
+      const installedNames = new Set(result.installed.map((skill) => skill.name));
+      queryClient.setQueryData<SourceScanResult | null>(cacheQueryKey, (current) => current ? {
+        ...current,
+        skills: current.skills.map((skill) => installedNames.has(skill.name) ? { ...skill, installed: true } : skill),
+      } : current);
+      const hasSyncWarnings = syncFailures > 0;
+      showToast({
+        tone: hasSyncWarnings ? "error" : "success",
+        title: hasSyncWarnings ? "Skill 已安装，同步未全部完成" : "Skill 安装完成",
+        description: `已安装 ${result.installed.length} 个，跳过 ${result.skipped.length} 个${selectedAgents.length ? `；同步到 ${selectedAgents.length} 个 Agent` : ""}${syncFailures ? `，${syncFailures} 个同步失败` : ""}。`,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environmentId] });
     },
     onError: (error) => showToast({ tone: "error", title: "Skill 安装失败", description: getErrorMessage(error) }),
   });
-  const pendingSkills = scan.data?.skills.filter((skill) => !skill.installed) ?? [];
-  const scanState = scan.isLoading ? "loading" : scan.isError && !scan.data ? "error" : "ready";
+  const scanData = cachedScan.data ?? undefined;
+  const pendingSkills = scanData?.skills.filter((skill) => !skill.installed) ?? [];
+  const installedCount = (scanData?.skills.length ?? 0) - pendingSkills.length;
+  const scanError = refreshScan.error ?? cachedScan.error;
+  const scanState = scanData ? "ready" : scanError ? "error" : "loading";
+  const isRefreshing = refreshScan.isPending && Boolean(scanData);
+  const lastScanAt = scanData?.source.lastScanAt ?? scanData?.source.last_scan_at;
+  const refreshStatus = isRefreshing
+    ? "显示本地缓存 · 正在后台更新"
+    : refreshScan.isError && scanData
+      ? "显示本地缓存 · 更新失败"
+      : `上次更新 ${formatSourceScanTime(lastScanAt)}`;
+  const toggleAgent = (agent: AgentKind) => {
+    setSelectedAgents((current) => current.includes(agent) ? current.filter((item) => item !== agent) : [...current, agent]);
+  };
   return (
-    <div className="source-scan-panel">
-      <div className="source-scan-header">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <div className="section-title">来源扫描</div>
-            {scan.isFetching && !scan.isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+    <>
+      <DetailDrawer open onOpenChange={(open) => { if (!open) onClose(); }}>
+        <DetailDrawerContent className="source-drawer">
+          <div className="drawer-header source-drawer-header">
+            <span className="source-drawer-icon"><SourceIcon kind={source.kind} /></span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <div className="drawer-kicker">安装来源</div>
+                <Badge>{sourceKindLabel(source.kind)}</Badge>
+              </div>
+              <DetailDrawerTitle>{source.id}</DetailDrawerTitle>
+              <DetailDrawerDescription title={source.url}>{source.url}</DetailDrawerDescription>
+            </div>
+            <DetailDrawerCloseButton />
           </div>
-          <div className="section-caption truncate" title={sourceId}>{sourceId}</div>
-        </div>
-        <div className="source-scan-actions">
-          {pendingSkills.length > 0 && (
-            <Button
-              size="sm"
-              pending={install.isPending && install.variables?.all}
-              pendingLabel="安装中"
-              disabled={install.isPending}
-              onClick={() => install.mutate({ skills: [], all: true })}
-            >
-              安装全部
-            </Button>
-          )}
-          <button className="icon-button" aria-label="关闭来源扫描" onClick={onClose}><X className="h-4 w-4" /></button>
-        </div>
-      </div>
-      <AnimatePresence initial={false} mode="wait">
-        <motion.div
-          key={scanState}
-          initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(3px)" }}
-          animate={{ opacity: 1, transform: "translateY(0px)" }}
-          exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-3px)" }}
-          transition={{ duration: reduceMotion ? 0.1 : 0.14, ease: [0.23, 1, 0.32, 1] }}
-          className="source-scan-content"
-        >
-          {scanState === "loading" && <PageLoading compact label="正在扫描来源…" />}
-          {scanState === "error" && <PageError title="扫描失败" message={getErrorMessage(scan.error)} onRetry={() => void scan.refetch()} />}
-          {scan.data && (
-            <div className="source-scan-list">
-              {scan.data.skills.map((skill) => {
-                const pending = install.isPending && !install.variables?.all && install.variables?.skills.includes(skill.name);
-                return (
-                  <div key={skill.name} className="source-scan-row">
-                    <div className="source-scan-copy">
-                      <div className="source-name" title={skill.name}>{skill.name}</div>
-                      <div className="source-scan-description">{skill.description || "暂无描述"}</div>
-                    </div>
-                    <Badge>{skill.installed ? "已纳管" : "待纳管"}</Badge>
-                    {!skill.installed && (
+          <div className="source-drawer-summary" aria-label="来源扫描摘要">
+            <div><span>Skill</span><strong>{scanData?.skills.length ?? "—"}</strong></div>
+            <div><span>已安装</span><strong>{scanData ? installedCount : "—"}</strong></div>
+            <div><span>待安装</span><strong>{scanData ? pendingSkills.length : "—"}</strong></div>
+          </div>
+          <div className="drawer-body source-drawer-body">
+            <div className="source-drawer-section-header">
+              <div>
+                <div className="drawer-section-title">来源 Skill</div>
+                <div
+                  className={cn("section-caption", refreshScan.isError && scanData && "source-refresh-error")}
+                  title={refreshScan.isError ? getErrorMessage(refreshScan.error) : undefined}
+                  aria-live="polite"
+                >
+                  {refreshStatus}
+                </div>
+              </div>
+              <Button variant="secondary" size="sm" disabled={refreshScan.isPending || install.isPending} onClick={() => refreshScan.mutate()}>
+                <RefreshCw className={cn("h-3.5 w-3.5", refreshScan.isPending && "animate-spin")} /> 更新
+              </Button>
+            </div>
+            {agents.length > 0 && (
+              <div className="source-agent-sync" aria-labelledby="source-agent-sync-title">
+                <div className="source-agent-sync-copy">
+                  <div id="source-agent-sync-title" className="drawer-section-title">安装后同步到</div>
+                  <div className="section-caption">{selectedAgents.length ? `已选择 ${selectedAgents.length} 个 Agent` : "不选择则只安装到当前 Hub"}</div>
+                </div>
+                <div className="source-agent-options">
+                  {agents.map((agent) => {
+                    const selected = selectedAgents.includes(agent);
+                    return (
                       <Button
-                        variant="secondary"
+                        key={agent}
+                        type="button"
+                        variant={selected ? "default" : "secondary"}
                         size="sm"
-                        pending={pending}
-                        pendingLabel="安装中"
+                        className="source-agent-option"
+                        aria-pressed={selected}
                         disabled={install.isPending}
-                        onClick={() => install.mutate({ skills: [skill.name], all: false })}
+                        onClick={() => toggleAgent(agent)}
                       >
-                        安装
+                        <AgentIcon agent={agent} size={14} />
+                        <span>{agentLabels[agent] ?? agent}</span>
                       </Button>
-                    )}
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <AnimatePresence initial={false} mode="wait">
+              <motion.div
+                key={scanState}
+                initial={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(3px)" }}
+                animate={{ opacity: 1, transform: "translateY(0px)" }}
+                exit={{ opacity: 0, transform: reduceMotion ? "none" : "translateY(-3px)" }}
+                transition={{ duration: reduceMotion ? 0.1 : 0.14, ease: [0.23, 1, 0.32, 1] }}
+                className="source-scan-content"
+              >
+                {scanState === "loading" && <PageLoading compact label={refreshScan.isPending ? "首次读取来源…" : "正在读取本地缓存…"} />}
+                {scanState === "error" && <PageError title="读取来源失败" message={getErrorMessage(scanError)} onRetry={() => refreshScan.mutate()} />}
+                {scanData && (
+                  <div className="source-scan-list">
+                    {scanData.skills.map((skill) => {
+                      const pending = install.isPending && install.variables?.mode === "single" && install.variables.skills.includes(skill.name);
+                      return (
+                        <div key={skill.name} className="source-scan-row">
+                          <div className="source-scan-copy">
+                            <div className="source-name" title={skill.name}>{skill.name}</div>
+                            <div className="source-scan-description">{skill.description || "暂无描述"}</div>
+                          </div>
+                          <Badge className={cn("source-scan-status", skill.installed ? "source-scan-status-installed" : "source-scan-status-pending")}>
+                            {skill.installed ? "已安装" : "待安装"}
+                          </Badge>
+                          {!skill.installed && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              pending={pending}
+                              pendingLabel="安装中"
+                              disabled={install.isPending}
+                              onClick={() => install.mutate({ skills: [skill.name], mode: "single" })}
+                            >
+                              {selectedAgents.length ? "安装并同步" : "安装"}
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {!scanData.skills.length && <EmptyState title="没有可安装的 Skill" description="该来源当前没有识别到 Skill。" />}
                   </div>
-                );
-              })}
-              {!scan.data.skills.length && <EmptyState title="没有可安装的 Skill" description="该来源当前没有识别到 Skill。" />}
+                )}
+              </motion.div>
+            </AnimatePresence>
+            <div className="drawer-section drawer-danger-section">
+              <div className="drawer-section-title">移除来源</div>
+              <p className="mb-3 text-xs leading-5 text-muted-foreground">只移除来源配置，不会删除已经安装到当前 Hub 的 Skill。</p>
+              <Button variant="destructive" size="sm" disabled={install.isPending} onClick={() => setRemoveOpen(true)}>
+                <Trash2 className="h-3.5 w-3.5" /> 移除来源
+              </Button>
+            </div>
+          </div>
+          {pendingSkills.length > 0 && (
+            <div className="source-drawer-footer">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{pendingSkills.length} 个 Skill 待安装</div>
+                <div className="section-caption">{selectedAgents.length ? `安装后同步到 ${selectedAgents.length} 个 Agent` : "已存在的 Skill 不会被覆盖"}</div>
+              </div>
+              <Button
+                size="sm"
+                pending={install.isPending && install.variables?.mode === "all"}
+                pendingLabel={selectedAgents.length ? "安装并同步中" : "安装中"}
+                disabled={install.isPending}
+                onClick={() => install.mutate({ skills: pendingSkills.map((skill) => skill.name), mode: "all" })}
+              >
+                {selectedAgents.length ? "安装并同步" : "安装全部"}
+              </Button>
             </div>
           )}
-        </motion.div>
-      </AnimatePresence>
-    </div>
+        </DetailDrawerContent>
+      </DetailDrawer>
+      <Dialog open={removeOpen} onOpenChange={setRemoveOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>移除来源 {source.id}？</DialogTitle>
+            <DialogDescription>只会移除来源配置；已经安装到当前 Hub 的 Skill 会继续保留。</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setRemoveOpen(false)}>取消</Button>
+            <Button variant="destructive" pending={removing} pendingLabel="移除中" onClick={onRemove}>
+              移除来源
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -1170,8 +1610,19 @@ function syncMethodLabel(method: SyncMethod) {
   return "自动";
 }
 
-function SourceIcon({ kind }: { kind: string }) {
-  return kind.toLowerCase().includes("git") ? <GitBranch className="h-4 w-4 text-muted-foreground" /> : <Cloud className="h-4 w-4 text-muted-foreground" />;
+function sourceKindLabel(kind: string) {
+  if (kind === "github") return "GitHub";
+  if (kind === "gitlab") return "GitLab";
+  if (kind === "generic-git") return "Git";
+  if (kind === "local") return "本地目录";
+  return kind;
+}
+
+function restoreFocusToItem(attribute: "data-skill-id" | "data-source-id", value: string) {
+  requestAnimationFrame(() => {
+    const elements = document.querySelectorAll<HTMLButtonElement>(`button[${attribute}]`);
+    Array.from(elements).find((element) => element.getAttribute(attribute) === value)?.focus();
+  });
 }
 
 function getErrorMessage(error: unknown) {
