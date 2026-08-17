@@ -119,16 +119,20 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
-            tauri_args: --target aarch64-apple-darwin --bundles dmg --no-sign --ci
+            tauri_args: --target aarch64-apple-darwin --bundles app,dmg --ci
+            artifact_name: release-desktop-aarch64-apple-darwin
           - os: macos-latest
             target: x86_64-apple-darwin
-            tauri_args: --target x86_64-apple-darwin --bundles dmg --no-sign --ci
+            tauri_args: --target x86_64-apple-darwin --bundles app,dmg --ci
+            artifact_name: release-desktop-x86_64-apple-darwin
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            tauri_args: --target x86_64-unknown-linux-gnu --bundles appimage,deb --no-sign --ci
+            tauri_args: --target x86_64-unknown-linux-gnu --bundles appimage,deb --ci
+            artifact_name: release-desktop-x86_64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            tauri_args: --target x86_64-pc-windows-msvc --bundles nsis,msi --no-sign --ci
+            tauri_args: --target x86_64-pc-windows-msvc --bundles nsis,msi --ci
+            artifact_name: release-desktop-x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -167,14 +171,26 @@ jobs:
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           tauriScript: pnpm tauri
           args: ${{ matrix.tauri_args }}
-          uploadWorkflowArtifacts: true
-          # The directory name is stable metadata; files inside keep Tauri's
-          # native product-name-based filenames until the release job.
-          workflowArtifactNamePattern: release-desktop-[platform]-[arch]-[bundle]
+      - name: Stage signed desktop release assets
+        shell: bash
+        run: |
+          node scripts/stage-desktop-release.mjs \
+            "target/${{ matrix.target }}/release/bundle" \
+            dist/desktop-release \
+            "${RELEASE_TAG}" \
+            "${{ matrix.target }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/desktop-release/*
+          if-no-files-found: error
+          retention-days: 7
 
   release:
     name: Upload verified draft assets
@@ -202,12 +218,25 @@ jobs:
         run: |
           node scripts/prepare-release-assets.mjs downloaded-assets release-assets "${RELEASE_TAG}"
           node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}"
+      - name: Generate updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${RELEASE_TAG}" --json body --jq .body > current-notes.md
+          published_at="$(gh release view "${RELEASE_TAG}" --json createdAt --jq .createdAt)"
+          node scripts/generate-updater-json.mjs \
+            release-assets \
+            "${RELEASE_TAG}" \
+            current-notes.md \
+            "${GITHUB_REPOSITORY}" \
+            "${published_at}"
+          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}" --with-updater-json
       - name: Generate checksums
         run: |
           cd release-assets
           LC_ALL=C sha256sum * > SHA256SUMS
           cd ..
-          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}" --with-checksums
+          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}" --with-updater-json --with-checksums
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: release-assets/*
@@ -216,7 +245,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${RELEASE_TAG}" release-assets/* --clobber
-          gh release view "${RELEASE_TAG}" --json body --jq .body > current-notes.md
           node scripts/render-release-notes.mjs current-notes.md release-notes.md
           gh release edit "${RELEASE_TAG}" --notes-file release-notes.md
 
@@ -246,7 +274,7 @@ jobs:
         run: gh release download "${RELEASE_TAG}" --dir release-assets
       - name: Verify asset inventory and checksums
         run: |
-          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}" --with-checksums
+          node scripts/check-release-assets.mjs release-assets "${RELEASE_TAG}" --with-updater-json --with-checksums
           cd release-assets
           sha256sum --check SHA256SUMS
       - name: Verify GitHub build provenance

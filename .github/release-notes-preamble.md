@@ -12,7 +12,7 @@
 
 ## Verify downloads
 
-`SHA256SUMS` covers every CLI archive and Desktop installer. All release files, including the checksum file, are covered by GitHub build provenance.
+`SHA256SUMS` covers every CLI archive, Desktop installer, updater artifact, signature, and `latest.json`. All release files, including the checksum file, are covered by GitHub build provenance.
 
 ```sh
 # macOS

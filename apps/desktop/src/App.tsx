@@ -10,6 +10,7 @@ import {
   ListFilter,
   ChevronLeft,
   Cloud,
+  Download,
   ExternalLink,
   FolderOpen,
   Loader2,
@@ -29,6 +30,7 @@ import {
   type AgentKind,
   type AgentConfig,
   type HubConfig,
+  type HubPreferences,
   type EnvironmentSnapshot,
   type EnvironmentSummary,
   type SkillImportPreview,
@@ -54,6 +56,7 @@ import { cn } from "@/lib/utils";
 import { AgentIcon, SourceIcon } from "@/lib/brand";
 import { useToast } from "@/lib/toast";
 import { useEnvironmentSnapshot } from "@/hooks/use-environment-snapshot";
+import { useAppUpdater, type AppUpdaterState } from "@/hooks/use-app-updater";
 import {
   agentStatus,
   buildSkillRows,
@@ -133,6 +136,7 @@ function App() {
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
+  const appUpdater = useAppUpdater();
   const selectedEnvironment = environments.data?.find((item) => item.id === environmentId) ?? environments.data?.[0];
 
   useEffect(() => {
@@ -166,8 +170,27 @@ function App() {
       <main className="app-main">
         {page === "skills" && selectedEnvironment && <SkillsPage environment={selectedEnvironment} environments={environments.data ?? []} />}
         {page === "sources" && selectedEnvironment && <SourcesPage environment={selectedEnvironment} />}
-        {page === "settings" && selectedEnvironment && <SettingsPage environment={selectedEnvironment} theme={theme} onThemeChange={setTheme} />}
-        {!selectedEnvironment && <EmptyState title="没有可用环境" description="添加本机或 SSH 环境后开始管理 Skill。" />}
+        {page === "settings" && selectedEnvironment && (
+          <SettingsPage
+            environment={selectedEnvironment}
+            theme={theme}
+            onThemeChange={setTheme}
+            updater={appUpdater.state}
+            onCheckForUpdates={() => void appUpdater.checkForUpdates()}
+            onInstallUpdate={() => void appUpdater.installUpdate()}
+          />
+        )}
+        {environments.isLoading && <PageLoading />}
+        {environments.isError && (
+          <PageError
+            title="无法读取环境配置"
+            message={getErrorMessage(environments.error)}
+            onRetry={() => void environments.refetch()}
+          />
+        )}
+        {!environments.isLoading && !environments.isError && !selectedEnvironment && (
+          <EmptyState title="没有可用环境" description="添加本机或 SSH 环境后开始管理 Skill。" />
+        )}
       </main>
     </div>
   );
@@ -1400,7 +1423,21 @@ function SourceForm({ loading, onSubmit }: { loading: boolean; onSubmit: (input:
   );
 }
 
-function SettingsPage({ environment, theme, onThemeChange }: { environment: EnvironmentSummary; theme: Theme; onThemeChange: (theme: Theme) => void }) {
+function SettingsPage({
+  environment,
+  theme,
+  onThemeChange,
+  updater,
+  onCheckForUpdates,
+  onInstallUpdate,
+}: {
+  environment: EnvironmentSummary;
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
+  updater: AppUpdaterState;
+  onCheckForUpdates: () => void;
+  onInstallUpdate: () => void;
+}) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const [hubDir, setHubDir] = useState("");
@@ -1409,8 +1446,22 @@ function SettingsPage({ environment, theme, onThemeChange }: { environment: Envi
   const preferences = useQuery({ queryKey: ["preferences"], queryFn: api.getPreferences, retry: false });
   const updatePreferences = useMutation({
     mutationFn: (defaultSyncMethod: SyncMethod) => api.updatePreferences({ defaultSyncMethod }),
-    onSuccess: () => showToast({ tone: "success", title: "设置已保存" }),
-    onError: (error) => showToast({ tone: "error", title: "设置保存失败", description: getErrorMessage(error) }),
+    onMutate: async (defaultSyncMethod) => {
+      await queryClient.cancelQueries({ queryKey: ["preferences"] });
+      const previous = queryClient.getQueryData<HubPreferences>(["preferences"]);
+      queryClient.setQueryData<HubPreferences>(["preferences"], (current) => current
+        ? { ...current, defaultSyncMethod, default_sync_method: defaultSyncMethod }
+        : current);
+      return { previous };
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["preferences"], saved);
+      showToast({ tone: "success", title: "设置已保存" });
+    },
+    onError: (error, _defaultSyncMethod, context) => {
+      if (context?.previous) queryClient.setQueryData(["preferences"], context.previous);
+      showToast({ tone: "error", title: "设置保存失败", description: getErrorMessage(error) });
+    },
   });
   const updateHubDir = useMutation({
     mutationFn: () => api.updateHubDir(hubDir.trim()),
@@ -1452,6 +1503,24 @@ function SettingsPage({ environment, theme, onThemeChange }: { environment: Envi
         { label: "默认同步", value: syncMethodLabel(preferences.data?.defaultSyncMethod ?? preferences.data?.default_sync_method ?? "auto") },
       ]
     : [];
+  const updateDescription = updater.status === "unsupported"
+    ? "仅打包后的桌面应用支持检查更新"
+    : updater.status === "checking"
+      ? "正在检查 GitHub Releases"
+      : updater.status === "available"
+        ? `发现新版本 ${updater.availableVersion}`
+        : updater.status === "up-to-date"
+          ? "当前已是最新版本"
+          : updater.status === "channel-pending"
+            ? "更新通道将在下一个正式版本发布后启用"
+          : updater.status === "downloading"
+            ? updater.progress === null ? "正在下载更新" : `正在下载更新 · ${updater.progress}%`
+            : updater.status === "ready"
+              ? "更新已安装，正在重新启动"
+              : updater.status === "error"
+                ? `检查或安装失败：${updater.error ?? "未知错误"}`
+                : "启动后会自动检查，也可以手动检查";
+  const updatePending = updater.status === "checking" || updater.status === "downloading";
   if (snapshot.isLoading) {
     return (
       <PageShell title="设置" subtitle="应用偏好和当前环境配置。" environment={environment}>
@@ -1478,6 +1547,27 @@ function SettingsPage({ environment, theme, onThemeChange }: { environment: Envi
         <div className="settings-section-header"><div><div className="section-title">应用</div><div className="section-caption">影响所有环境的显示和默认策略</div></div></div>
         <div className="settings-row"><div><div className="font-medium">主题</div><div className="text-xs text-muted-foreground">跟随系统或手动选择</div></div><div className="segmented-control">{(["system", "light", "dark"] as Theme[]).map((item) => <button key={item} className={cn("segmented-item", theme === item && "segmented-item-active")} onClick={() => onThemeChange(item)}>{item === "system" ? "系统" : item === "light" ? <><Sun className="h-3.5 w-3.5" />浅色</> : <><Moon className="h-3.5 w-3.5" />深色</>}</button>)}</div></div>
         <div className="settings-row"><div><div className="font-medium">默认同步方式</div><div className="text-xs text-muted-foreground">本机和 SSH 环境 Agent 的默认同步方式</div></div><div className="segmented-control" aria-busy={updatePreferences.isPending}>{(["auto", "symlink", "copy"] as SyncMethod[]).map((item) => <button key={item} disabled={updatePreferences.isPending} className={cn("segmented-item", (preferences.data?.defaultSyncMethod ?? preferences.data?.default_sync_method ?? "auto") === item && "segmented-item-active")} onClick={() => updatePreferences.mutate(item)}>{item === "auto" ? "自动" : item === "symlink" ? "链接" : "复制"}</button>)}</div></div>
+        <div className="settings-row settings-update-row">
+          <div>
+            <div className="font-medium">应用更新</div>
+            <div className={cn("text-xs text-muted-foreground", updater.status === "error" && "settings-update-error")}>{updateDescription}</div>
+            {updater.notes && updater.status === "available" && <div className="settings-update-notes">{updater.notes}</div>}
+          </div>
+          <div className="settings-update-actions">
+            <code>v{updater.currentVersion ?? "—"}</code>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              pending={updatePending}
+              pendingLabel={updater.status === "downloading" && updater.progress !== null ? `${updater.progress}%` : "检查中"}
+              disabled={updater.status === "unsupported" || updater.status === "ready"}
+              onClick={updater.status === "available" ? onInstallUpdate : onCheckForUpdates}
+            >
+              {updater.status === "available" ? <><Download className="h-3.5 w-3.5" /> 安装 {updater.availableVersion}</> : <><RefreshCw className="h-3.5 w-3.5" /> 检查更新</>}
+            </Button>
+          </div>
+        </div>
       </section>
       {environment.kind === "local" && <section className="settings-section">
         <div className="settings-section-header"><div><div className="section-title">统一技能库</div><div className="section-caption">只更新管理路径，不搬运原目录内容</div></div></div>

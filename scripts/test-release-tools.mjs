@@ -10,6 +10,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import {
+  cliArtifactTargets,
+  desktopArtifactTargets,
+  desktopAssetsForTarget,
+  releaseAssetNames,
+} from './release-assets.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -71,6 +77,11 @@ for (const job of ['validate', 'verify']) {
   );
 }
 
+assert.match(workflowJob(releaseWorkflow, 'desktop'), /TAURI_SIGNING_PRIVATE_KEY/);
+assert.match(workflowJob(releaseWorkflow, 'desktop'), /--bundles app,dmg/);
+assert.doesNotMatch(workflowJob(releaseWorkflow, 'desktop'), /--no-sign/);
+assert.match(workflowJob(releaseWorkflow, 'release'), /generate-updater-json\.mjs/);
+
 function runScript(script, args, { input = '', succeeds = true } = {}) {
   const result = spawnSync(process.execPath, [resolve(root, script), ...args], {
     cwd: root,
@@ -106,51 +117,40 @@ const downloadedFixture = mkdtempSync(
 const preparedFixture = mkdtempSync(
   join(tmpdir(), 'skills-hub-prepared-assets-'),
 );
+const bundleFixture = mkdtempSync(join(tmpdir(), 'skills-hub-desktop-bundles-'));
+const stagedFixture = mkdtempSync(join(tmpdir(), 'skills-hub-staged-desktop-'));
 const tag = 'v0.1.2';
 const version = tag.slice(1);
-const assets = [
-  `skh-${tag}-aarch64-apple-darwin.tar.gz`,
-  `skh-${tag}-x86_64-apple-darwin.tar.gz`,
-  `skh-${tag}-x86_64-pc-windows-msvc.zip`,
-  `skh-${tag}-x86_64-unknown-linux-gnu.tar.gz`,
-  `skills-hub-v${version}-darwin-aarch64-unsigned.dmg`,
-  `skills-hub-v${version}-darwin-x64-unsigned.dmg`,
-  `skills-hub-v${version}-linux-amd64-unsigned.AppImage`,
-  `skills-hub-v${version}-linux-amd64-unsigned.deb`,
-  `skills-hub-v${version}-windows-x64-unsigned-setup.exe`,
-  `skills-hub-v${version}-windows-x64-unsigned.msi`,
-];
-
+const assets = releaseAssetNames(tag);
 const workflowArtifacts = new Map([
-  [
-    'release-cli-aarch64-apple-darwin',
-    `skh-${tag}-aarch64-apple-darwin.tar.gz`,
-  ],
-  [
-    'release-cli-x86_64-apple-darwin',
-    `skh-${tag}-x86_64-apple-darwin.tar.gz`,
-  ],
-  [
-    'release-cli-x86_64-pc-windows-msvc',
-    `skh-${tag}-x86_64-pc-windows-msvc.zip`,
-  ],
-  [
-    'release-cli-x86_64-unknown-linux-gnu',
-    `skh-${tag}-x86_64-unknown-linux-gnu.tar.gz`,
-  ],
-  ['release-desktop-darwin-aarch64-dmg', `Skills Hub_${version}_aarch64.dmg`],
-  ['release-desktop-darwin-x64-dmg', `Skills Hub_${version}_x64.dmg`],
-  ['release-desktop-linux-amd64-appimage', `Skills Hub_${version}_amd64.AppImage`],
-  ['release-desktop-linux-amd64-deb', `Skills Hub_${version}_amd64.deb`],
-  ['release-desktop-windows-x64-nsis', `Skills Hub_${version}_x64-setup.exe`],
-  ['release-desktop-windows-x64-msi', `Skills Hub_${version}_x64_en-US.msi`],
+  ...[...cliArtifactTargets(tag)].map(([artifact, asset]) => [artifact, [asset]]),
+  ...desktopArtifactTargets(tag),
+]);
+const nativeDesktopBundles = new Map([
+  ['aarch64-apple-darwin', [['dmg', `Skills Hub_${version}_aarch64.dmg`], ['macos', 'Skills Hub.app.tar.gz'], ['macos', 'Skills Hub.app.tar.gz.sig']]],
+  ['x86_64-apple-darwin', [['dmg', `Skills Hub_${version}_x64.dmg`], ['macos', 'Skills Hub.app.tar.gz'], ['macos', 'Skills Hub.app.tar.gz.sig']]],
+  ['x86_64-unknown-linux-gnu', [['appimage', `Skills Hub_${version}_amd64.AppImage`], ['appimage', `Skills Hub_${version}_amd64.AppImage.sig`], ['deb', `Skills Hub_${version}_amd64.deb`], ['deb', `Skills Hub_${version}_amd64.deb.sig`]]],
+  ['x86_64-pc-windows-msvc', [['nsis', `Skills Hub_${version}_x64-setup.exe`], ['nsis', `Skills Hub_${version}_x64-setup.exe.sig`], ['msi', `Skills Hub_${version}_x64_en-US.msi`], ['msi', `Skills Hub_${version}_x64_en-US.msi.sig`]]],
 ]);
 
 try {
-  for (const [artifact, filename] of workflowArtifacts) {
+  for (const [target, entries] of nativeDesktopBundles) {
+    const bundleDirectory = join(bundleFixture, target);
+    const outputDirectory = join(stagedFixture, target);
+    mkdirSync(bundleDirectory);
+    for (const [bundle, filename] of entries) {
+      const nativeDirectory = join(bundleDirectory, bundle);
+      mkdirSync(nativeDirectory, { recursive: true });
+      writeFileSync(join(nativeDirectory, filename), `fixture-${filename}`);
+    }
+    runScript('scripts/stage-desktop-release.mjs', [bundleDirectory, outputDirectory, tag, target]);
+    assert.deepEqual(readdirSync(outputDirectory).sort(), desktopAssetsForTarget(tag, target).sort());
+  }
+
+  for (const [artifact, filenames] of workflowArtifacts) {
     const directory = join(downloadedFixture, artifact);
     mkdirSync(directory);
-    writeFileSync(join(directory, filename), 'fixture');
+    for (const filename of filenames) writeFileSync(join(directory, filename), `fixture-${filename}`);
   }
 
   runScript('scripts/prepare-release-assets.mjs', [
@@ -161,34 +161,51 @@ try {
   assert.deepEqual(readdirSync(preparedFixture).sort(), [...assets].sort());
   runScript('scripts/check-release-assets.mjs', [preparedFixture, tag]);
 
+  const currentNotes = join(downloadedFixture, 'current-notes.md');
+  writeFileSync(currentNotes, '## Changes\n\n- Added signed updater artifacts.\n');
+  runScript('scripts/generate-updater-json.mjs', [
+    preparedFixture,
+    tag,
+    currentNotes,
+    'yeyunwen/skills-hub',
+    '2026-08-17T00:00:00Z',
+  ]);
+  runScript('scripts/check-release-assets.mjs', [preparedFixture, tag, '--with-updater-json']);
+  const updaterJson = JSON.parse(readFileSync(join(preparedFixture, 'latest.json'), 'utf8'));
+  assert.equal(updaterJson.version, version);
+  assert.equal(updaterJson.pub_date, '2026-08-17T00:00:00.000Z');
+  assert.match(updaterJson.platforms['darwin-aarch64'].url, /releases\/download\/v0\.1\.2/);
+  assert.equal(updaterJson.platforms['windows-x86_64'].signature.startsWith('fixture-'), true);
+  assert.match(updaterJson.platforms['windows-x86_64-msi'].url, /\.msi$/);
+  assert.match(updaterJson.platforms['linux-x86_64-deb'].url, /\.deb$/);
+
   for (const asset of assets) {
     writeFileSync(join(fixture, asset), 'fixture');
   }
 
   runScript('scripts/check-release-assets.mjs', [fixture, tag]);
-  runScript(
-    'scripts/check-release-assets.mjs',
-    [fixture, tag, '--with-checksums'],
-    { succeeds: false },
-  );
+  runScript('scripts/check-release-assets.mjs', [fixture, tag, '--with-updater-json'], { succeeds: false });
+
+  writeFileSync(join(fixture, 'latest.json'), 'fixture');
+  runScript('scripts/check-release-assets.mjs', [fixture, tag, '--with-updater-json']);
+  runScript('scripts/check-release-assets.mjs', [fixture, tag, '--with-updater-json', '--with-checksums'], { succeeds: false });
 
   writeFileSync(join(fixture, 'SHA256SUMS'), 'fixture');
   runScript('scripts/check-release-assets.mjs', [
     fixture,
     tag,
+    '--with-updater-json',
     '--with-checksums',
   ]);
 
   writeFileSync(join(fixture, 'unexpected.bin'), 'fixture');
   runScript(
     'scripts/check-release-assets.mjs',
-    [fixture, tag, '--with-checksums'],
+    [fixture, tag, '--with-updater-json', '--with-checksums'],
     { succeeds: false },
   );
 
-  const currentNotes = join(fixture, 'current-notes.md');
   const renderedNotes = join(fixture, 'rendered-notes.md');
-  writeFileSync(currentNotes, '## Changes\n\n- Added release automation.\n');
   runScript('scripts/render-release-notes.mjs', [
     currentNotes,
     renderedNotes,
@@ -207,6 +224,8 @@ try {
   rmSync(fixture, { recursive: true, force: true });
   rmSync(downloadedFixture, { recursive: true, force: true });
   rmSync(preparedFixture, { recursive: true, force: true });
+  rmSync(bundleFixture, { recursive: true, force: true });
+  rmSync(stagedFixture, { recursive: true, force: true });
 }
 
 console.log('Release tooling tests passed');

@@ -1,88 +1,35 @@
 import assert from 'node:assert/strict';
-import {
-  constants,
-  copyFileSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-} from 'node:fs';
-import { resolve } from 'node:path';
+import { constants, copyFileSync, lstatSync, mkdirSync, readdirSync } from 'node:fs';
+import { basename, resolve } from 'node:path';
+import { cliArtifactTargets, desktopArtifactTargets, TAG_PATTERN } from './release-assets.mjs';
 
 const downloadedDirectory = resolve(process.argv[2] ?? 'downloaded-assets');
 const releaseDirectory = resolve(process.argv[3] ?? 'release-assets');
 const tag = process.argv[4];
-const tagPattern =
-  /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
-if (!tag || !tagPattern.test(tag)) {
-  console.error(
-    'Usage: node scripts/prepare-release-assets.mjs <downloaded-directory> <release-directory> <vX.Y.Z>',
-  );
+if (!tag || !TAG_PATTERN.test(tag)) {
+  console.error('Usage: node scripts/prepare-release-assets.mjs <downloaded-directory> <release-directory> <vX.Y.Z>');
   process.exit(1);
 }
 
-const version = tag.slice(1);
-const artifactTargets = new Map([
-  [
-    'release-cli-aarch64-apple-darwin',
-    `skh-${tag}-aarch64-apple-darwin.tar.gz`,
-  ],
-  [
-    'release-cli-x86_64-apple-darwin',
-    `skh-${tag}-x86_64-apple-darwin.tar.gz`,
-  ],
-  [
-    'release-cli-x86_64-pc-windows-msvc',
-    `skh-${tag}-x86_64-pc-windows-msvc.zip`,
-  ],
-  [
-    'release-cli-x86_64-unknown-linux-gnu',
-    `skh-${tag}-x86_64-unknown-linux-gnu.tar.gz`,
-  ],
-  [
-    'release-desktop-darwin-aarch64-dmg',
-    `skills-hub-v${version}-darwin-aarch64-unsigned.dmg`,
-  ],
-  [
-    'release-desktop-darwin-x64-dmg',
-    `skills-hub-v${version}-darwin-x64-unsigned.dmg`,
-  ],
-  [
-    'release-desktop-linux-amd64-appimage',
-    `skills-hub-v${version}-linux-amd64-unsigned.AppImage`,
-  ],
-  [
-    'release-desktop-linux-amd64-deb',
-    `skills-hub-v${version}-linux-amd64-unsigned.deb`,
-  ],
-  [
-    'release-desktop-windows-x64-nsis',
-    `skills-hub-v${version}-windows-x64-unsigned-setup.exe`,
-  ],
-  [
-    'release-desktop-windows-x64-msi',
-    `skills-hub-v${version}-windows-x64-unsigned.msi`,
-  ],
-]);
-
-function artifactFile(directory) {
-  const entries = readdirSync(directory, { withFileTypes: true });
-  assert.equal(entries.length, 1, `${directory} must contain exactly one file`);
-  const entry = entries[0];
-  assert.equal(entry.isFile(), true, `${directory}/${entry.name} must be a file`);
-  const path = resolve(directory, entry.name);
-  assert.equal(lstatSync(path).isSymbolicLink(), false, `${path} must not be a symlink`);
-  return path;
+function listFiles(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return listFiles(path);
+    assert.equal(entry.isFile(), true, `${path} must be a file`);
+    assert.equal(lstatSync(path).isSymbolicLink(), false, `${path} must not be a symlink`);
+    return [path];
+  });
 }
 
-const downloadedArtifacts = readdirSync(downloadedDirectory, {
-  withFileTypes: true,
-});
-const downloadedNames = downloadedArtifacts.map((entry) => entry.name).sort();
-const expectedNames = [...artifactTargets.keys()].sort();
+const artifactTargets = new Map([
+  ...[...cliArtifactTargets(tag)].map(([artifact, asset]) => [artifact, [asset]]),
+  ...desktopArtifactTargets(tag),
+]);
+const downloadedArtifacts = readdirSync(downloadedDirectory, { withFileTypes: true });
 assert.deepEqual(
-  downloadedNames,
-  expectedNames,
+  downloadedArtifacts.map((entry) => entry.name).sort(),
+  [...artifactTargets.keys()].sort(),
   'downloaded release artifacts must match the configured build matrix',
 );
 assert.equal(
@@ -92,15 +39,20 @@ assert.equal(
 );
 
 mkdirSync(releaseDirectory, { recursive: true });
-assert.deepEqual(
-  readdirSync(releaseDirectory),
-  [],
-  `${releaseDirectory} must be empty before preparing assets`,
-);
+assert.deepEqual(readdirSync(releaseDirectory), [], `${releaseDirectory} must be empty before preparing assets`);
 
-for (const [artifact, target] of artifactTargets) {
-  const source = artifactFile(resolve(downloadedDirectory, artifact));
-  copyFileSync(source, resolve(releaseDirectory, target), constants.COPYFILE_EXCL);
+for (const [artifact, assets] of artifactTargets) {
+  const files = listFiles(resolve(downloadedDirectory, artifact));
+  assert.deepEqual(
+    files.map((path) => basename(path)).sort(),
+    [...assets].sort(),
+    `${artifact} must contain the exact staged release assets`,
+  );
+  for (const asset of assets) {
+    const source = files.find((path) => basename(path) === asset);
+    assert.ok(source, `${artifact}/${asset} must exist`);
+    copyFileSync(source, resolve(releaseDirectory, asset), constants.COPYFILE_EXCL);
+  }
 }
 
-console.log(`Prepared ${artifactTargets.size} release assets for ${tag}`);
+console.log(`Prepared ${[...artifactTargets.values()].flat().length} release assets for ${tag}`);
