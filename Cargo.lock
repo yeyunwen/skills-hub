@@ -3342,7 +3342,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skh-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3355,7 +3355,7 @@ dependencies = [
 
 [[package]]
 name = "skills-hub-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3374,7 +3374,7 @@ dependencies = [
 
 [[package]]
 name = "skills-hub-desktop"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "opener",
