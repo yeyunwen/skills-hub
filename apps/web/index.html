@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Skills Hub 是一个管理、分发和迁移 AI Coding Agent Skills 的开源桌面工具与 CLI。"
+    />
+    <meta name="theme-color" content="#f5f2eb" />
+    <meta property="og:title" content="Skills Hub — 管好每一个 AI Coding Skill" />
+    <meta
+      property="og:description"
+      content="从 Git、SSH 和本地目录收集 Skills，统一分发到 Codex、Claude、Cursor 等 Coding Agent。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="%BASE_URL%assets/skills-overview-light.png" />
+    <link rel="icon" href="%BASE_URL%assets/skill-hub-logo.png" />
+    <title>Skills Hub — AI Coding Skills 管理工具</title>
+    <script type="module" src="/src/main.js"></script>
+  </head>
+  <body>
+    <header class="site-header" data-header>
+      <div class="shell nav-shell">
+        <a class="brand" href="#top" aria-label="Skills Hub 首页">
+          <img src="%BASE_URL%assets/skill-hub-logo.png" alt="" width="36" height="36" />
+          <span>Skills Hub</span>
+        </a>
+
+        <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav" data-menu-button>
+          <span class="sr-only">打开导航</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+
+        <nav class="site-nav" id="site-nav" data-menu>
+          <a href="#features">功能</a>
+          <a href="#workflow">工作方式</a>
+          <a href="#quickstart">快速开始</a>
+          <a href="#download">下载</a>
+        </nav>
+
+        <a
+          class="nav-github"
+          href="https://github.com/yeyunwen/skills-hub"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.64-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.58 9.58 0 0 1 12 7c.85 0 1.7.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.6c0 .27.18.58.69.48A10 10 0 0 0 12 2Z" />
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero shell">
+        <div class="hero-copy reveal">
+          <div class="eyebrow"><span></span> 开源 · 本地优先 · 跨平台</div>
+          <h1>让每一个 Coding Agent<br /><em>用上同一套 Skills</em></h1>
+          <p class="hero-lead">
+            从 Git、SSH 和本地目录收集 Skills，统一纳管，再安全分发到 Codex、Claude、Cursor、OpenClaw
+            等开发环境。
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/yeyunwen/skills-hub/releases/latest" data-download>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" />
+              </svg>
+              <span data-download-label>下载桌面应用</span>
+            </a>
+            <a class="button button-secondary" href="#quickstart">查看快速开始</a>
+          </div>
+          <div class="hero-notes">
+            <span>macOS · Windows · Linux</span>
+            <span>桌面端 + CLI</span>
+            <span>MIT License</span>
+          </div>
+        </div>
+
+        <div class="hero-visual reveal reveal-delay-1" aria-label="Skills Hub 桌面应用预览">
+          <div class="visual-glow"></div>
+          <div class="app-window">
+            <div class="window-bar">
+              <div class="traffic-lights"><i></i><i></i><i></i></div>
+              <span>Skills Hub</span>
+              <div></div>
+            </div>
+            <img
+              src="%BASE_URL%assets/skills-overview-light.png"
+              alt="Skills Hub 技能管理界面，展示技能列表和不同 Agent 的同步状态"
+            />
+          </div>
+          <div class="floating-card floating-card-top">
+            <span class="status-dot"></span>
+            <div><strong>3 个 Agent 已同步</strong><small>所有 Skills 状态正常</small></div>
+          </div>
+          <div class="floating-card floating-card-bottom">
+            <div class="mini-icon">↗</div>
+            <div><strong>跨设备传输</strong><small>本机 → office-mac</small></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="agent-strip" aria-label="支持的 Coding Agent">
+        <div class="shell agent-strip-inner">
+          <span>一处管理，多处使用</span>
+          <div class="agent-list">
+            <b>Codex</b><i></i><b>Claude</b><i></i><b>Cursor</b><i></i><b>OpenClaw</b><i></i><b>更多自定义 Agent</b>
+          </div>
+        </div>
+      </section>
+
+      <section class="section shell" id="features">
+        <div class="section-heading reveal">
+          <div class="eyebrow"><span></span> 核心能力</div>
+          <h2>把散落的 Skills，<br />变成可靠的开发资产</h2>
+          <p>Skills Hub 管理来源、版本、环境和分发状态，你不再需要手工复制目录或猜测哪个 Agent 用的是哪一份。</p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature-card feature-card-wide reveal">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h16M7.5 4v7M16.5 4v7M5 14h5v5H5zM14 14h5v5h-5z" /></svg>
+            </div>
+            <div>
+              <span class="feature-number">01</span>
+              <h3>统一技能库</h3>
+              <p>把 GitHub、GitLab、SSH Git、本地目录和 ZIP 中的 SKILL.md 收进同一个 Hub，扫描后按需安装。</p>
+            </div>
+            <div class="source-stack" aria-hidden="true">
+              <span><b>GH</b> github.com/team/skills <i>12</i></span>
+              <span><b>GL</b> gitlab.company/ai-skills <i>8</i></span>
+              <span><b>↳</b> ~/Downloads/my-skills.zip <i>3</i></span>
+            </div>
+          </article>
+
+          <article class="feature-card reveal reveal-delay-1">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6 4 10l4 4M16 10h4M16 18l4-4-4-4M8 14H4M12 3v18" /></svg>
+            </div>
+            <span class="feature-number">02</span>
+            <h3>多 Agent 分发</h3>
+            <p>优先使用 symlink，失败时安全回退到 copy；冲突、缺失和同步状态一目了然。</p>
+          </article>
+
+          <article class="feature-card reveal reveal-delay-2">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18h14M7 18V8l5-4 5 4v10M9 12h6M12 9v6" /></svg>
+            </div>
+            <span class="feature-number">03</span>
+            <h3>本机与 SSH 同构</h3>
+            <p>每台电脑都是独立环境。用相同界面查看技能、Agent 与冲突，并在环境间显式传输。</p>
+          </article>
+
+          <article class="feature-card feature-card-dark reveal">
+            <div class="feature-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 3v5c0 4.8-2.8 8.1-7 10-4.2-1.9-7-5.2-7-10V6l7-3Z" /><path d="m9 12 2 2 4-4" /></svg>
+            </div>
+            <span class="feature-number">04</span>
+            <h3>安全地接管目录</h3>
+            <p>覆盖前自动备份，破坏性操作有明确边界。发布产物可通过 SHA256SUMS 与 GitHub attestation 验证。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="workflow-section" id="workflow">
+        <div class="shell workflow-grid">
+          <div class="workflow-copy reveal">
+            <div class="eyebrow eyebrow-light"><span></span> 工作方式</div>
+            <h2>一个 Hub，连接你的所有开发环境</h2>
+            <p>Skills Hub 不建立隐式双向同步。每个环境保持独立，任何迁移和分发都由你明确触发。</p>
+            <ul class="check-list">
+              <li><span>✓</span> 先扫描，再选择安装</li>
+              <li><span>✓</span> 清楚区分纳管、同步和冲突</li>
+              <li><span>✓</span> 桌面界面与 CLI 使用同一套核心逻辑</li>
+            </ul>
+          </div>
+
+          <div class="workflow-map reveal reveal-delay-1" aria-label="Skills Hub 数据流示意图">
+            <div class="map-column">
+              <span class="map-label">来源</span>
+              <div class="map-node"><b>Git</b><small>GitHub / GitLab</small></div>
+              <div class="map-node"><b>Local</b><small>文件夹 / ZIP</small></div>
+              <div class="map-node"><b>SSH</b><small>远程仓库</small></div>
+            </div>
+            <div class="map-lines map-lines-in" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="hub-node">
+              <img src="%BASE_URL%assets/skill-hub-logo.png" alt="" />
+              <b>Skills Hub</b>
+              <small>统一技能库</small>
+            </div>
+            <div class="map-lines map-lines-out" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="map-column">
+              <span class="map-label">环境</span>
+              <div class="map-node"><b>Local</b><small>本机 Agents</small></div>
+              <div class="map-node"><b>Office</b><small>SSH · 已连接</small></div>
+              <div class="map-node"><b>Server</b><small>SSH · 离线</small></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section shell quickstart-section" id="quickstart">
+        <div class="section-heading reveal">
+          <div class="eyebrow"><span></span> 快速开始</div>
+          <h2>三步建立你的 Skills Hub</h2>
+          <p>偏爱界面就下载桌面应用；喜欢终端则使用同名 CLI。两者管理的是同一套本地数据。</p>
+        </div>
+
+        <div class="quickstart-layout">
+          <ol class="steps reveal">
+            <li class="active" data-step="1">
+              <span>1</span>
+              <div><b>安装并初始化</b><small>创建本机统一技能库</small></div>
+            </li>
+            <li data-step="2">
+              <span>2</span>
+              <div><b>添加技能来源</b><small>扫描 Git 仓库中的 SKILL.md</small></div>
+            </li>
+            <li data-step="3">
+              <span>3</span>
+              <div><b>同步到 Agent</b><small>按需分发到开发工具</small></div>
+            </li>
+          </ol>
+
+          <div class="terminal reveal reveal-delay-1">
+            <div class="terminal-bar">
+              <div class="traffic-lights"><i></i><i></i><i></i></div>
+              <span>Terminal</span>
+              <button type="button" data-copy aria-label="复制命令">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8h10v12H9zM5 16V4h10" /></svg>
+                <span>复制</span>
+              </button>
+            </div>
+            <pre><code data-command><span class="prompt">$</span> cargo install --git https://github.com/yeyunwen/skills-hub skh-cli
+
+<span class="prompt">$</span> skh init
+<span class="success">✓ Hub initialized at ~/.agents/skills</span>
+
+<span class="prompt">$</span> skh source add git@github.com:team/agent-skills.git
+<span class="prompt">$</span> skh source scan agent-skills
+<span class="success">✓ Found 12 skills</span>
+
+<span class="prompt">$</span> skh agent sync --tools codex,claude,cursor
+<span class="success">✓ Synced 12 skills to 3 agents</span></code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="download-section shell" id="download">
+        <div class="download-card reveal">
+          <div class="download-copy">
+            <div class="eyebrow eyebrow-light"><span></span> 开始使用</div>
+            <h2>把时间花在使用 Skills，<br />而不是搬运文件。</h2>
+            <p>免费下载 Skills Hub。所有数据保留在你的设备上，核心代码完全开源。</p>
+            <div class="download-actions">
+              <a class="button button-white" href="https://github.com/yeyunwen/skills-hub/releases/latest" data-download>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" /></svg>
+                <span data-download-label>下载桌面应用</span>
+              </a>
+              <a class="text-link" href="https://github.com/yeyunwen/skills-hub#%E4%BB%8E%E6%BA%90%E7%A0%81%E5%AE%89%E8%A3%85-cli">
+                安装 CLI <span>↗</span>
+              </a>
+            </div>
+          </div>
+          <img src="%BASE_URL%assets/skill-hub-logo.png" alt="Skills Hub 图标" />
+        </div>
+        <div class="security-note">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 3v5c0 4.8-2.8 8.1-7 10-4.2-1.9-7-5.2-7-10V6l7-3Z" /><path d="m9 12 2 2 4-4" /></svg>
+          <p><b>关于安装安全提醒</b> 当前社区桌面构建尚未配置商业代码签名，macOS Gatekeeper 或 Windows SmartScreen 可能显示提醒。请从 GitHub Releases 下载，并使用随版本提供的 SHA256SUMS 校验文件。</p>
+          <a href="https://github.com/yeyunwen/skills-hub/blob/main/SECURITY.md">安全策略 ↗</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-grid">
+        <div>
+          <a class="brand footer-brand" href="#top">
+            <img src="%BASE_URL%assets/skill-hub-logo.png" alt="" width="34" height="34" />
+            <span>Skills Hub</span>
+          </a>
+          <p>管理、分发和迁移 AI Coding Agent Skills。</p>
+        </div>
+        <div class="footer-links">
+          <div><b>产品</b><a href="#features">功能</a><a href="#quickstart">快速开始</a><a href="#download">下载</a></div>
+          <div><b>项目</b><a href="https://github.com/yeyunwen/skills-hub">GitHub</a><a href="https://github.com/yeyunwen/skills-hub/releases">Releases</a><a href="https://github.com/yeyunwen/skills-hub/issues">Issues</a></div>
+          <div><b>资源</b><a href="https://github.com/yeyunwen/skills-hub/blob/main/README.md">文档</a><a href="https://github.com/yeyunwen/skills-hub/blob/main/CHANGELOG.md">Changelog</a><a href="https://github.com/yeyunwen/skills-hub/blob/main/SECURITY.md">安全</a></div>
+        </div>
+      </div>
+      <div class="shell footer-bottom"><span>© <span data-year></span> Skills Hub</span><span>Built for people who give their agents better tools.</span></div>
+    </footer>
+  </body>
+</html>

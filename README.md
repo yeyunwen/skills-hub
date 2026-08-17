@@ -200,3 +200,14 @@ Environment -> Skills -> Agents
 ```
 
 本机和 SSH 环境处于同一级入口。切换环境后进入相同的 Skills 页面；安装来源、设置、对比和传输围绕当前环境或明确的来源/目标环境执行。
+
+## 官网
+
+静态官网位于 `apps/web`，用于产品介绍、下载和快速开始：
+
+```bash
+pnpm web:dev
+pnpm web:check
+```
+
+合并到 `main` 后，GitHub Actions 会构建并部署到 GitHub Pages。
