@@ -5,6 +5,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  CheckCircle2,
   ChevronRight,
   CircleAlert,
   ListFilter,
@@ -206,6 +207,7 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
   const [conflictResolution, setConflictResolution] = useState<{ skillName: string; agent: AgentKind } | null>(null);
+  const [bulkConflictOpen, setBulkConflictOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [migrationOpen, setMigrationOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
@@ -234,6 +236,17 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   const selectedConflictSkill = conflictResolution
     ? rows.find((row) => row.name === conflictResolution.skillName)
     : null;
+  const conflictSkillCount = useMemo(
+    () => new Set(overview?.conflicts.map((item) => item.skillName) ?? []).size,
+    [overview?.conflicts],
+  );
+  const conflictAgentCounts = useMemo(() => {
+    const counts = new Map<AgentKind, number>();
+    for (const conflict of overview?.conflicts ?? []) {
+      counts.set(conflict.agent, (counts.get(conflict.agent) ?? 0) + 1);
+    }
+    return Array.from(counts, ([agent, count]) => ({ agent, count }));
+  }, [overview?.conflicts]);
   const visibleRows = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     const result = rows.filter((row) => {
@@ -310,6 +323,46 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
       await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] });
     },
     onError: (error, variables, toastId) => updateToast(toastId ?? "", { tone: "error", title: "接管失败", description: `${variables.skillName} · ${getErrorMessage(error)}` }),
+  });
+  const bulkTakeoverMutation = useMutation({
+    mutationFn: async (conflicts: NonNullable<typeof overview>["conflicts"]) => {
+      const succeeded: typeof conflicts = [];
+      const failed: Array<{ conflict: (typeof conflicts)[number]; reason: string }> = [];
+      for (const conflict of conflicts) {
+        try {
+          await api.takeoverEnvironmentSkill({
+            environmentId: environment.id,
+            skillName: conflict.skillName,
+            tools: [conflict.agent],
+          });
+          succeeded.push(conflict);
+        } catch (error) {
+          failed.push({ conflict, reason: getErrorMessage(error) });
+        }
+      }
+      return { succeeded, failed };
+    },
+    onMutate: (conflicts) => showToast({
+      tone: "loading",
+      title: "正在批量解决冲突",
+      description: `正在依次备份并处理 ${conflicts.length} 个冲突项。`,
+    }),
+    onSuccess: async (result, _conflicts, toastId) => {
+      setBulkConflictOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] });
+      const hasFailures = result.failed.length > 0;
+      updateToast(toastId, {
+        tone: hasFailures ? "error" : "success",
+        title: hasFailures ? "部分冲突未解决" : "冲突已全部解决",
+        description: hasFailures
+          ? `已解决 ${result.succeeded.length} 项，失败 ${result.failed.length} 项；失败项仍保留在冲突列表中。`
+          : `已备份并接管 ${result.succeeded.length} 个冲突项。`,
+      });
+    },
+    onError: async (error, _conflicts, toastId) => {
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", environment.id] });
+      updateToast(toastId ?? "", { tone: "error", title: "批量处理失败", description: getErrorMessage(error) });
+    },
   });
   const handleAgentAction = (skillName: string, agent: AgentKind, status: string) => {
     if (status === "conflict") {
@@ -466,6 +519,11 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
             <div className="section-title">技能列表</div>
             <div className="section-caption">{filtering ? `${visibleRows.length} / ${rows.length}` : visibleRows.length} 个 Skill</div>
           </div>
+          {statusFilter === "conflict" && Boolean(overview?.conflicts.length) && (
+            <Button size="sm" onClick={() => setBulkConflictOpen(true)}>
+              <CheckCircle2 className="h-3.5 w-3.5" /> 一键解决 {overview?.conflicts.length} 项
+            </Button>
+          )}
         </div>
         <div className="skill-list">
           {pageRows.map((row) => (
@@ -557,6 +615,42 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
               onClick={() => conflictResolution && takeoverMutation.mutate(conflictResolution)}
             >
               备份并使用 Hub 版本
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={bulkConflictOpen}
+        onOpenChange={(open) => { if (!bulkTakeoverMutation.isPending) setBulkConflictOpen(open); }}
+      >
+        <DialogContent className="bulk-conflict-dialog">
+          <DialogHeader>
+            <DialogTitle>一键解决全部冲突？</DialogTitle>
+            <DialogDescription>所有冲突都将以当前 Hub 版本为准，Agent 中的现有版本会分别备份。</DialogDescription>
+          </DialogHeader>
+          <div className="bulk-conflict-summary">
+            <div><span>冲突项</span><strong>{overview?.conflicts.length ?? 0}</strong></div>
+            <div><span>涉及 Skill</span><strong>{conflictSkillCount}</strong></div>
+            <div><span>涉及 Agent</span><strong>{conflictAgentCounts.length}</strong></div>
+          </div>
+          <div className="bulk-conflict-agents">
+            {conflictAgentCounts.map(({ agent, count }) => (
+              <span key={agent}><AgentIcon agent={agent} size={14} />{agentLabels[agent] ?? agent}<strong>{count}</strong></span>
+            ))}
+          </div>
+          <div className="conflict-resolution-note">
+            <CircleAlert className="h-4 w-4 shrink-0" />
+            <span>该操作会逐项执行。即使某一项失败，其他冲突仍会继续处理；所有被替换的 Agent 内容都会先进入备份目录。</span>
+          </div>
+          <div className="conflict-resolution-actions">
+            <Button variant="secondary" disabled={bulkTakeoverMutation.isPending} onClick={() => setBulkConflictOpen(false)}>取消</Button>
+            <Button
+              pending={bulkTakeoverMutation.isPending}
+              pendingLabel="正在批量处理"
+              disabled={!overview?.conflicts.length}
+              onClick={() => overview?.conflicts.length && bulkTakeoverMutation.mutate(overview.conflicts)}
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" /> 备份并解决全部冲突
             </Button>
           </div>
         </DialogContent>
