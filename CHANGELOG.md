@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/yeyunwen/skills-hub/compare/v0.2.1...v0.3.0) (2026-08-17)
+
+
+### Features
+
+* **desktop:** add signed app updates ([#27](https://github.com/yeyunwen/skills-hub/issues/27)) ([be048e2](https://github.com/yeyunwen/skills-hub/commit/be048e28cb852515c4ba8aa4ed7d049c4d5f8286))
+
+
+### Documentation
+
+* update skills overview screenshot ([8c0662b](https://github.com/yeyunwen/skills-hub/commit/8c0662bc5f03348283b63a439bf40898e2b6a3e0))
+
 ## [0.2.1](https://github.com/yeyunwen/skills-hub/compare/v0.2.0...v0.2.1) (2026-08-15)
 
 
