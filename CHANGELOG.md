@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/yeyunwen/skills-hub/compare/v0.4.0...v0.5.0) (2026-08-17)
+
+
+### Features
+
+* **desktop:** add bulk conflict resolution ([#34](https://github.com/yeyunwen/skills-hub/issues/34)) ([341fbcd](https://github.com/yeyunwen/skills-hub/commit/341fbcd94641a0c0646b98bcec8db028312f83ba))
+
 ## [0.4.0](https://github.com/yeyunwen/skills-hub/compare/v0.3.0...v0.4.0) (2026-08-17)
 
 
