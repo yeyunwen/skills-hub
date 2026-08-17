@@ -177,10 +177,17 @@ jobs:
           projectPath: apps/desktop
           tauriScript: pnpm tauri
           args: ${{ matrix.tauri_args }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Keep application sources pinned to the release tag above, while
+          # allowing release-only tooling fixes to package an existing draft.
+          ref: ${{ github.sha }}
+          path: .release-tooling
+          sparse-checkout: scripts
       - name: Stage signed desktop release assets
         shell: bash
         run: |
-          node scripts/stage-desktop-release.mjs \
+          node .release-tooling/scripts/stage-desktop-release.mjs \
             "target/${{ matrix.target }}/release/bundle" \
             dist/desktop-release \
             "${RELEASE_TAG}" \

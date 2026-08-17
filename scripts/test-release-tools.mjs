@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -80,6 +81,9 @@ for (const job of ['validate', 'verify']) {
 assert.match(workflowJob(releaseWorkflow, 'desktop'), /TAURI_SIGNING_PRIVATE_KEY/);
 assert.match(workflowJob(releaseWorkflow, 'desktop'), /--bundles app,dmg/);
 assert.doesNotMatch(workflowJob(releaseWorkflow, 'desktop'), /--no-sign/);
+assert.match(workflowJob(releaseWorkflow, 'desktop'), /ref: \$\{\{ github\.sha \}\}/);
+assert.match(workflowJob(releaseWorkflow, 'desktop'), /path: \.release-tooling/);
+assert.match(workflowJob(releaseWorkflow, 'desktop'), /node \.release-tooling\/scripts\/stage-desktop-release\.mjs/);
 assert.match(workflowJob(releaseWorkflow, 'release'), /generate-updater-json\.mjs/);
 
 function runScript(script, args, { input = '', succeeds = true } = {}) {
@@ -142,6 +146,12 @@ try {
       const nativeDirectory = join(bundleDirectory, bundle);
       mkdirSync(nativeDirectory, { recursive: true });
       writeFileSync(join(nativeDirectory, filename), `fixture-${filename}`);
+    }
+    if (target === 'x86_64-unknown-linux-gnu' && process.platform !== 'win32') {
+      const appDir = join(bundleDirectory, 'appimage', 'Skills Hub.AppDir');
+      mkdirSync(appDir, { recursive: true });
+      writeFileSync(join(appDir, 'skills-hub.png'), 'fixture-icon');
+      symlinkSync('skills-hub.png', join(appDir, '.DirIcon'));
     }
     runScript('scripts/stage-desktop-release.mjs', [bundleDirectory, outputDirectory, tag, target]);
     assert.deepEqual(readdirSync(outputDirectory).sort(), desktopAssetsForTarget(tag, target).sort());

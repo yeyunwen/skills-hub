@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { constants, copyFileSync, lstatSync, mkdirSync, readdirSync } from 'node:fs';
+import { constants, copyFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { desktopAssetsForTarget } from './release-assets.mjs';
 
@@ -16,9 +16,11 @@ if (!tag || !target) {
 function listFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = resolve(directory, entry.name);
+    // AppImage AppDir trees contain internal links such as `.DirIcon`. They
+    // are implementation details of the bundle, not release assets.
+    if (entry.isSymbolicLink()) return [];
     if (entry.isDirectory()) return listFiles(path);
     assert.equal(entry.isFile(), true, `${path} must be a file`);
-    assert.equal(lstatSync(path).isSymbolicLink(), false, `${path} must not be a symlink`);
     return [path];
   });
 }
