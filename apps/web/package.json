@@ -1,0 +1,15 @@
+{
+  "name": "skills-hub-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "vite build"
+  },
+  "devDependencies": {
+    "vite": "^7.3.0"
+  }
+}
