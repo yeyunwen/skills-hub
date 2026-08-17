@@ -78,7 +78,7 @@ Tauri updater 使用独立的 minisign 密钥验证自动更新包：
 
 ### 平台代码签名
 
-当前 Desktop 产物明确使用 `unsigned` 文件名，Release Notes 也会提示 Gatekeeper/SmartScreen 风险。后续签名材料应放在 `release` GitHub Environment secrets 中，并增加：
+当前 Desktop 产物明确使用 `unsigned` 文件名，Release Notes 也会提示 Gatekeeper/SmartScreen 风险。macOS 构建使用 Tauri 的 ad-hoc identity `-` 对完整 app bundle 签名，避免浏览器下载后因无有效 bundle 签名被报告为“已损坏”；这不等同于受信任的 Developer ID 签名或 Apple 公证。后续签名材料应放在 `release` GitHub Environment secrets 中，并增加：
 
 - macOS Developer ID 签名与 Apple notarization；
 - Windows Authenticode 代码签名；

@@ -39,6 +39,9 @@ const releaseWorkflow = readFileSync(
   resolve(root, '.github/workflows/release.yml'),
   'utf8',
 );
+const tauriConfig = JSON.parse(
+  readFileSync(resolve(root, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'),
+);
 
 function workflowJob(source, name) {
   const marker = `\n  ${name}:\n`;
@@ -81,10 +84,16 @@ for (const job of ['validate', 'verify']) {
 assert.match(workflowJob(releaseWorkflow, 'desktop'), /TAURI_SIGNING_PRIVATE_KEY/);
 assert.match(workflowJob(releaseWorkflow, 'desktop'), /--bundles app,dmg/);
 assert.doesNotMatch(workflowJob(releaseWorkflow, 'desktop'), /--no-sign/);
+assert.match(workflowJob(releaseWorkflow, 'desktop'), /codesign --verify --deep --strict/);
 assert.match(workflowJob(releaseWorkflow, 'desktop'), /ref: \$\{\{ github\.sha \}\}/);
 assert.match(workflowJob(releaseWorkflow, 'desktop'), /path: \.release-tooling/);
 assert.match(workflowJob(releaseWorkflow, 'desktop'), /node \.release-tooling\/scripts\/stage-desktop-release\.mjs/);
 assert.match(workflowJob(releaseWorkflow, 'release'), /generate-updater-json\.mjs/);
+assert.equal(
+  tauriConfig.bundle?.macOS?.signingIdentity,
+  '-',
+  'macOS release builds must use at least an ad-hoc bundle signature',
+);
 
 function runScript(script, args, { input = '', succeeds = true } = {}) {
   const result = spawnSync(process.execPath, [resolve(root, script), ...args], {

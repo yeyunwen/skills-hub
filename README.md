@@ -10,7 +10,7 @@
 
 ### 下载桌面应用
 
-GitHub Releases 同时提供 macOS、Windows 和 Linux 桌面安装包。当前社区构建尚未配置商业代码签名，因此文件名会包含 `unsigned`；macOS Gatekeeper 和 Windows SmartScreen 可能会显示安全提醒。
+GitHub Releases 同时提供 macOS、Windows 和 Linux 桌面安装包。当前社区构建尚未配置受信任的平台代码签名，因此文件名会包含 `unsigned`；macOS 安装包会使用 ad-hoc 签名保证应用包完整，但未配置 Developer ID 签名与 Apple 公证，Gatekeeper 和 Windows SmartScreen 仍可能显示安全提醒。
 
 桌面应用启动后会在后台检查最新稳定版，也可以在“设置 → 应用更新”中手动检查、下载安装并重启。自动更新包使用独立的 Tauri updater 签名验证，不会安装签名不匹配的文件。
 
