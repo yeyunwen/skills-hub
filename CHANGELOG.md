@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/yeyunwen/skills-hub/compare/v0.3.0...v0.4.0) (2026-08-17)
+
+
+### Features
+
+* **desktop:** add agent skill migration flow ([#30](https://github.com/yeyunwen/skills-hub/issues/30)) ([e1e44be](https://github.com/yeyunwen/skills-hub/commit/e1e44becc246944281c20be3318b42e6cf667179))
+* **web:** add product website ([#31](https://github.com/yeyunwen/skills-hub/issues/31)) ([fd06554](https://github.com/yeyunwen/skills-hub/commit/fd065547f7440af691efdde2022e70363093a6f9))
+
+
+### Bug Fixes
+
+* ad-hoc sign macOS app bundles ([#33](https://github.com/yeyunwen/skills-hub/issues/33)) ([db81190](https://github.com/yeyunwen/skills-hub/commit/db8119081455503f3584ba78a65ba46d9620d4a8))
+* **ci:** pin website deploy actions ([#32](https://github.com/yeyunwen/skills-hub/issues/32)) ([8c53661](https://github.com/yeyunwen/skills-hub/commit/8c5366198885cbc3426bc889475cf4077da56769))
+* **release:** handle AppImage symlinks ([#28](https://github.com/yeyunwen/skills-hub/issues/28)) ([67b7b19](https://github.com/yeyunwen/skills-hub/commit/67b7b19ac7a706835c3fd824820b2366ce5ada97))
+
 ## [0.3.0](https://github.com/yeyunwen/skills-hub/compare/v0.2.1...v0.3.0) (2026-08-17)
 
 
