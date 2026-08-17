@@ -37,11 +37,12 @@ Release PR 合并后，Release Please 会创建 `vX.Y.Z` Tag 和 Draft Release�
 
 1. 验证 Tag 对应提交属于受保护的 `main`；
 2. 验证 Tag、`version.txt`、Cargo、Node 和 Tauri 版本完全一致；
-3. 构建 4 个 CLI 包和 6 个 unsigned Desktop 安装包；
-4. 精确检查 10 个产物，拒绝缺失、空文件或意外文件；
-5. 生成 `SHA256SUMS` 和 GitHub artifact attestation；
-6. 上传到 Release Please 创建的 Draft，并补充下载、安全和验证说明；
-7. 重新下载所有 Release 资产，验证 checksum 与 provenance。
+3. 构建 4 个 CLI 包、6 个 unsigned Desktop 安装包，以及 8 个 updater 包或签名；
+4. 精确检查 18 个基础产物，拒绝缺失、空文件或意外文件；
+5. 根据 Draft Release 内容和最终资产名称生成 `latest.json`；
+6. 生成 `SHA256SUMS` 和 GitHub artifact attestation；
+7. 上传到 Release Please 创建的 Draft，并补充下载、安全和验证说明；
+8. 重新下载全部 20 个 Release 资产，验证 checksum 与 provenance。
 
 ## 4. 一次发布审批
 
@@ -61,6 +62,21 @@ Release PR 合并后，Release Please 会创建 `vX.Y.Z` Tag 和 Draft Release�
 - 已正式发布后发现问题：发布新 patch 版本，不替换旧资产。
 
 ## 代码签名
+
+### Updater 签名
+
+Tauri updater 使用独立的 minisign 密钥验证自动更新包：
+
+- 公钥提交在 `apps/desktop/src-tauri/tauri.conf.json`；
+- 私钥保存在 GitHub Actions Repository Secret `TAURI_SIGNING_PRIVATE_KEY`；
+- 当前维护机备份位于 `~/.tauri/skills-hub-updater.key`，权限必须保持为 `0600`；
+- 私钥不得提交到仓库、日志或 Release 资产；丢失私钥后，已经安装的旧客户端将无法信任后续更新。
+
+更新端点固定为稳定版 GitHub Release 的 `latest.json`。Prerelease 不会被稳定版客户端通过该端点自动安装。
+
+在第一个包含 updater 产物的新版本发布前，旧的 Latest Release 不存在 `latest.json`；客户端会显示“更新通道将在下一个正式版本发布后启用”，而不是把这个引导阶段显示为网络错误。
+
+### 平台代码签名
 
 当前 Desktop 产物明确使用 `unsigned` 文件名，Release Notes 也会提示 Gatekeeper/SmartScreen 风险。后续签名材料应放在 `release` GitHub Environment secrets 中，并增加：
 

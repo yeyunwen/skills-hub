@@ -1254,6 +1254,22 @@
     @apply min-w-0 flex-1;
   }
 
+  .settings-update-actions {
+    @apply flex shrink-0 items-center gap-3;
+  }
+
+  .settings-update-actions code {
+    @apply text-[11px] text-muted-foreground;
+  }
+
+  .settings-update-notes {
+    @apply mt-1.5 line-clamp-3 max-w-2xl whitespace-pre-line text-[11px] leading-4 text-muted-foreground;
+  }
+
+  .settings-update-error {
+    color: hsl(var(--destructive));
+  }
+
   .settings-path-row {
     @apply rounded-none;
   }
@@ -1595,6 +1611,10 @@
     .settings-section-header-actions {
       @apply items-start;
       flex-direction: column;
+    }
+
+    .settings-update-actions {
+      @apply w-full justify-between;
     }
 
     .settings-form-row {
