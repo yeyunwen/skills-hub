@@ -8,7 +8,7 @@
 - **CLI only:** the `skh-...` archive matching your target triple
 
 > [!WARNING]
-> Desktop installers are currently **unsigned and unnotarized**. macOS Gatekeeper and Windows SmartScreen may display a warning. Verify the checksum or GitHub attestation before opening an unsigned build.
+> Desktop installers currently have **no trusted platform signature** and macOS builds are unnotarized. macOS app bundles use an ad-hoc signature for bundle integrity, but Gatekeeper and Windows SmartScreen may still display a warning. Verify the checksum or GitHub attestation before opening an unsigned build.
 
 ## Verify downloads
 
