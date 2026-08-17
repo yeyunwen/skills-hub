@@ -12,6 +12,7 @@ import {
   Cloud,
   Download,
   ExternalLink,
+  FolderInput,
   FolderOpen,
   Loader2,
   Moon,
@@ -33,6 +34,7 @@ import {
   type HubPreferences,
   type EnvironmentSnapshot,
   type EnvironmentSummary,
+  type MigrationRecord,
   type SkillImportPreview,
   type SourceScanResult,
   type SkillSource,
@@ -203,7 +205,9 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   const [agentFilter, setAgentFilter] = useState<AgentKind | "all">("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
+  const [conflictResolution, setConflictResolution] = useState<{ skillName: string; agent: AgentKind } | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [migrationOpen, setMigrationOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const snapshot = useEnvironmentSnapshot(environment.id);
@@ -224,6 +228,12 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
     () => (snapshot.data ? buildWorkspaceOverview({ hub: snapshot.data.hub, agents: snapshot.data.agents }, snapshot.data.statuses) : null),
     [snapshot.data],
   );
+  const selectedConflict = conflictResolution
+    ? overview?.conflicts.find((item) => item.skillName === conflictResolution.skillName && item.agent === conflictResolution.agent)
+    : null;
+  const selectedConflictSkill = conflictResolution
+    ? rows.find((row) => row.name === conflictResolution.skillName)
+    : null;
   const visibleRows = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     const result = rows.filter((row) => {
@@ -291,6 +301,7 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
       api.takeoverEnvironmentSkill({ environmentId: environment.id, skillName, tools: [agent] }),
     onMutate: ({ skillName, agent }) => showToast({ tone: "loading", title: "正在备份并接管", description: `${skillName} · ${agentLabels[agent]}` }),
     onSuccess: async (_result, variables, toastId) => {
+      setConflictResolution(null);
       queryClient.setQueryData<EnvironmentSnapshot>(
         ["environment-snapshot", environment.id],
         (current) => updateSnapshotAgentStatus(current, variables.skillName, variables.agent, "linked"),
@@ -302,7 +313,7 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
   });
   const handleAgentAction = (skillName: string, agent: AgentKind, status: string) => {
     if (status === "conflict") {
-      takeoverMutation.mutate({ skillName, agent });
+      setConflictResolution({ skillName, agent });
       return;
     }
     skillMutation.mutate({ skillName, agent, status });
@@ -353,6 +364,17 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
           >
             <Plus className="h-3.5 w-3.5" /> 添加 Skill
           </Button>
+          {environment.kind === "local" && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setMigrationOpen(true)}
+              disabled={!overview?.importable.length}
+              title={overview?.importable.length ? "选择 Agent，将其中已有的 Skill 纳入 Hub 管理" : "当前没有待迁移的 Agent Skill"}
+            >
+              <FolderInput className="h-3.5 w-3.5" /> 迁移已有 Skill
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="sm"
@@ -382,7 +404,21 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
         <StatItem label="已纳管" value={overview?.hubCount ?? 0} />
         <StatItem label="待纳管" value={overview?.importable.length ?? 0} tone="muted" />
         <StatItem label="已同步" value={overview?.enabledCount ?? 0} tone="success" />
-        <StatItem label="冲突" value={overview?.conflicts.length ?? 0} tone="danger" />
+        <StatItem
+          label="冲突项"
+          value={overview?.conflicts.length ?? 0}
+          tone="danger"
+          ariaLabel={`冲突项 ${overview?.conflicts.length ?? 0}，按 Skill × Agent 计数，点击查看并处理`}
+          tooltip={{
+            title: "按 Skill × Agent 计数",
+            description: "同一 Skill 在多个 Agent 中发生冲突时，会分别计为一项。",
+          }}
+          onClick={overview?.conflicts.length ? () => {
+            setQuery("");
+            setAgentFilter("all");
+            setStatusFilter("conflict");
+          } : undefined}
+        />
       </div>
       <div className="workspace-toolbar">
         <div className="search-field">
@@ -479,6 +515,52 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
         />
       )}
       <TransferDialog open={transferOpen} onOpenChange={setTransferOpen} source={environment} environments={environments} />
+      <AgentMigrationDialog
+        open={migrationOpen}
+        onOpenChange={setMigrationOpen}
+        snapshot={snapshot.data}
+        agentLabels={agentLabels}
+      />
+      <Dialog
+        open={Boolean(conflictResolution)}
+        onOpenChange={(open) => { if (!open && !takeoverMutation.isPending) setConflictResolution(null); }}
+      >
+        <DialogContent className="conflict-resolution-dialog">
+          <DialogHeader>
+            <DialogTitle>解决 Skill 冲突</DialogTitle>
+            <DialogDescription>
+              {conflictResolution
+                ? `${conflictResolution.skillName} 在 ${agentLabels[conflictResolution.agent] ?? conflictResolution.agent} 中存在未受 Hub 管理的同名内容。`
+                : "当前存在未受 Hub 管理的同名内容。"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="conflict-resolution-paths">
+            <div>
+              <span>Hub 版本</span>
+              <code title={selectedConflictSkill?.path}>{selectedConflictSkill?.path ?? "—"}</code>
+            </div>
+            <div>
+              <span>Agent 当前版本</span>
+              <code title={selectedConflict?.path}>{selectedConflict?.path ?? "—"}</code>
+            </div>
+          </div>
+          <div className="conflict-resolution-note">
+            <CircleAlert className="h-4 w-4 shrink-0" />
+            <span>继续后会先把 Agent 当前版本移动到备份目录，再创建指向 Hub 版本的链接。Agent 当前内容不会被直接删除。</span>
+          </div>
+          <div className="conflict-resolution-actions">
+            <Button variant="secondary" disabled={takeoverMutation.isPending} onClick={() => setConflictResolution(null)}>取消</Button>
+            <Button
+              pending={takeoverMutation.isPending}
+              pendingLabel="正在备份并接管"
+              disabled={!conflictResolution}
+              onClick={() => conflictResolution && takeoverMutation.mutate(conflictResolution)}
+            >
+              备份并使用 Hub 版本
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <ImportSkillDialog
         open={importOpen}
         onOpenChange={setImportOpen}
@@ -487,6 +569,140 @@ function SkillsPage({ environment, environments }: { environment: EnvironmentSum
         agentLabels={agentLabels}
       />
     </PageShell>
+  );
+}
+
+function AgentMigrationDialog({
+  open,
+  onOpenChange,
+  snapshot,
+  agentLabels,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  snapshot: EnvironmentSnapshot;
+  agentLabels: Record<string, string>;
+}) {
+  const queryClient = useQueryClient();
+  const { showToast, updateToast } = useToast();
+  const [selectedAgents, setSelectedAgents] = useState<AgentKind[]>([]);
+  const overview = useMemo(
+    () => buildWorkspaceOverview({ hub: snapshot.hub, agents: snapshot.agents }, snapshot.statuses),
+    [snapshot],
+  );
+  const agentOptions = useMemo(
+    () => snapshot.agents.map((group) => ({
+      agent: group.agent,
+      skillsDir: group.skillsDir ?? group.skills_dir ?? "",
+      skills: overview.importable.filter((skill) => skill.agent === group.agent),
+    })),
+    [overview.importable, snapshot.agents],
+  );
+  const migratableAgents = useMemo(
+    () => agentOptions.filter((option) => option.skills.length > 0).map((option) => option.agent),
+    [agentOptions],
+  );
+  const selectedSkillCount = agentOptions.reduce(
+    (total, option) => total + (selectedAgents.includes(option.agent) ? option.skills.length : 0),
+    0,
+  );
+
+  useEffect(() => {
+    if (open) setSelectedAgents(migratableAgents);
+  }, [migratableAgents, open]);
+
+  const migration = useMutation({
+    mutationFn: async (agents: AgentKind[]) => {
+      const records: MigrationRecord[] = [];
+      for (const agent of agents) {
+        records.push(...await api.migrateFromAgent({ from: agent, force: false }));
+      }
+      return records;
+    },
+    onMutate: (agents) => showToast({
+      tone: "loading",
+      title: "正在迁移 Agent Skill",
+      description: `正在处理 ${agents.length} 个 Agent，请勿移动相关目录。`,
+    }),
+    onSuccess: async (records, agents, toastId) => {
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", snapshot.environment.id] });
+      updateToast(toastId, {
+        tone: "success",
+        title: "迁移完成",
+        description: records.length
+          ? `已将 ${records.length} 个 Skill 从 ${agents.length} 个 Agent 纳入 Hub 管理。原目录已备份并替换为链接。`
+          : "所选 Agent 中没有新的 Skill 需要迁移。",
+      });
+      onOpenChange(false);
+    },
+    onError: async (error, _agents, toastId) => {
+      await queryClient.invalidateQueries({ queryKey: ["environment-snapshot", snapshot.environment.id] });
+      updateToast(toastId ?? "", {
+        tone: "error",
+        title: "迁移中断",
+        description: `已完成的迁移会保留并显示在列表中。${getErrorMessage(error)}`,
+      });
+    },
+  });
+
+  const toggleAgent = (agent: AgentKind) => {
+    setSelectedAgents((current) => current.includes(agent)
+      ? current.filter((item) => item !== agent)
+      : [...current, agent]);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!migration.isPending) onOpenChange(nextOpen); }}>
+      <DialogContent className="agent-migration-dialog">
+        <DialogHeader>
+          <DialogTitle>迁移已有 Agent Skill</DialogTitle>
+          <DialogDescription>选择需要迁移的 Agent。Skill 会先复制到 Hub，原目录备份成功后再替换为指向 Hub 的链接。</DialogDescription>
+        </DialogHeader>
+        <div className="agent-migration-summary">
+          <div><span>可迁移 Agent</span><strong>{migratableAgents.length}</strong></div>
+          <div><span>待迁移 Skill</span><strong>{overview.importable.length}</strong></div>
+          <div><span>本次选择</span><strong>{selectedSkillCount}</strong></div>
+        </div>
+        <div className="agent-migration-list" aria-label="选择要迁移的 Agent">
+          {agentOptions.map((option) => {
+            const disabled = option.skills.length === 0;
+            const selected = selectedAgents.includes(option.agent);
+            return (
+              <label key={option.agent} className={cn("agent-migration-row", disabled && "agent-migration-row-disabled")}>
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  disabled={disabled || migration.isPending}
+                  onChange={() => toggleAgent(option.agent)}
+                />
+                <span className="agent-migration-icon"><AgentIcon agent={option.agent} size={16} /></span>
+                <span className="agent-migration-copy">
+                  <strong>{agentLabels[option.agent] ?? option.agent}</strong>
+                  <span title={option.skillsDir}>{option.skills.length
+                    ? option.skills.map((skill) => skill.name).join("、")
+                    : "没有待迁移的 Skill"}</span>
+                </span>
+                <Badge>{option.skills.length} 个</Badge>
+              </label>
+            );
+          })}
+        </div>
+        <div className="agent-migration-note">
+          同名 Skill 已存在于 Hub 时不会覆盖，迁移后可在技能列表中处理对应冲突。
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" disabled={migration.isPending} onClick={() => onOpenChange(false)}>取消</Button>
+          <Button
+            pending={migration.isPending}
+            pendingLabel="迁移中"
+            disabled={!selectedAgents.length || selectedSkillCount === 0}
+            onClick={() => migration.mutate(selectedAgents)}
+          >
+            <FolderInput className="h-3.5 w-3.5" /> 迁移 {selectedSkillCount} 个 Skill
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -524,7 +740,7 @@ const SkillRow = memo(function SkillRow({
             <button
               key={agent}
               className={cn("agent-status-cell", status === "conflict" && "agent-status-conflict", synced && "agent-status-synced", pending && "agent-status-loading")}
-              title={`${agentLabels[agent]} · ${statusLabels[status] ?? status}`}
+              title={`${agentLabels[agent]} · ${status === "conflict" ? "冲突，点击处理" : statusLabels[status] ?? status}`}
               onClick={() => onAgentAction(agent, status)}
               disabled={pending}
             >
@@ -1693,8 +1909,39 @@ function AgentConfigDialog({ open, agent, onOpenChange, onSaved }: { open: boole
   </Dialog>;
 }
 
-function StatItem({ label, value, tone = "default" }: { label: string; value: number; tone?: "default" | "success" | "muted" | "danger" }) {
-  return <div className="stat-item"><div className="kicker">{label}</div><div className={cn("stat-value", tone === "success" && "stat-value-success", tone === "danger" && "stat-value-danger", tone === "muted" && "stat-value-muted")}>{value}</div></div>;
+function StatItem({
+  label,
+  value,
+  tone = "default",
+  ariaLabel,
+  tooltip,
+  onClick,
+}: {
+  label: string;
+  value: number;
+  tone?: "default" | "success" | "muted" | "danger";
+  ariaLabel?: string;
+  tooltip?: { title: string; description: string };
+  onClick?: () => void;
+}) {
+  const content = <>
+    <div className="stat-item-heading">
+      <div className="kicker">{label}</div>
+      {onClick && <span className="stat-item-action-label">查看 <ChevronRight className="h-3 w-3" /></span>}
+    </div>
+    <div className={cn("stat-value", tone === "success" && "stat-value-success", tone === "danger" && "stat-value-danger", tone === "muted" && "stat-value-muted")}>{value}</div>
+  </>;
+  return onClick
+    ? <button type="button" className="stat-item stat-item-action" aria-label={ariaLabel} onClick={onClick}>
+      {content}
+      {tooltip && (
+        <span className="stat-item-tooltip" role="tooltip">
+          <strong>{tooltip.title}</strong>
+          <span>{tooltip.description}</span>
+        </span>
+      )}
+    </button>
+    : <div className="stat-item">{content}</div>;
 }
 
 function compareStatusLabel(status: string) {

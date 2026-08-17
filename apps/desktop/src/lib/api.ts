@@ -160,6 +160,20 @@ export interface AgentSkillRemoveResult {
   reason?: string | null;
 }
 
+export interface MigrationRecord {
+  agent: AgentKind;
+  skill_name?: string;
+  skillName?: string;
+  original_path?: string;
+  originalPath?: string;
+  hub_path?: string;
+  hubPath?: string;
+  backup_path?: string;
+  backupPath?: string;
+  migrated_at?: string;
+  migratedAt?: string;
+}
+
 export interface RemoveHubSkillResult {
   skill?: SkillInfo | null;
   agents: LinkTargetResult[];
@@ -812,8 +826,50 @@ function mockInvoke<T>(command: string, args?: Record<string, unknown>): T {
       return { agent: input.agent, skillName: input.skillName, path: "", backupPath: mockPath(".config/skills-hub/backups/github"), status: "linked", method: input.syncMethod ?? "auto" } as T;
     case "remove_agent_skill":
       return { agent: input.agent, skillName: input.skillName, path: "", backupPath: mockPath(".config/skills-hub/backups/skill"), status: "unlinked" } as T;
-    case "migrate_from_agent":
-      return { from: input.from, migrated: true } as T;
+    case "migrate_from_agent": {
+      const agent = String(input.from);
+      const group = mockAgents.find((item) => item.agent === agent);
+      const migrated: MigrationRecord[] = [];
+      if (!group) return migrated as T;
+      const hubNames = new Set(mockHub.flatMap((skill) => [dirName(skill), skill.name]));
+      const nextSkills = group.skills.map((skill) => {
+        const skillName = dirName(skill);
+        if ((skill.isSymlink ?? skill.is_symlink) || skillName.startsWith(".") || hubNames.has(skillName) || hubNames.has(skill.name)) {
+          return skill;
+        }
+        const hubSkill: SkillInfo = {
+          ...skill,
+          dirName: skillName,
+          path: `${MOCK_HUB_DIR}/${skillName}`,
+          isSymlink: false,
+          symlinkTarget: null,
+        };
+        mockHub = [...mockHub, hubSkill];
+        hubNames.add(skillName);
+        hubNames.add(skill.name);
+        mockStatuses = [...mockStatuses, {
+          skillName,
+          hubPath: hubSkill.path,
+          agents: mockAgents.map(({ agent: targetAgent, skillsDir }) => ({
+            agent: targetAgent,
+            status: targetAgent === agent ? "linked" : "missing",
+            path: `${skillsDir}/${skillName}`,
+            targetPath: hubSkill.path,
+          })),
+        }];
+        migrated.push({
+          agent,
+          skillName,
+          originalPath: skill.path,
+          hubPath: hubSkill.path,
+          backupPath: mockPath(`.config/skills-hub/backups/migrations/${agent}/${skillName}`),
+          migratedAt: new Date().toISOString(),
+        });
+        return { ...skill, isSymlink: true, symlinkTarget: hubSkill.path };
+      });
+      mockAgents = mockAgents.map((item) => item.agent === agent ? { ...item, skills: nextSkills } : item);
+      return migrated as T;
+    }
     case "remote_sync_skill":
       return { remote: mockRemotes[0], agent: input.agent, skillName: input.skillName, status: "linked" } as T;
     case "remote_sync_local_agent_skill":
@@ -971,7 +1027,7 @@ export const api = {
     syncMethod?: SyncMethod;
   }) => invoke<TakeoverResult>("takeover_agent_skill", { input }),
   migrateFromAgent: (input: { from: AgentKind; force: boolean; dryRun?: boolean }) =>
-    invoke<unknown>("migrate_from_agent", { input }),
+    invoke<MigrationRecord[]>("migrate_from_agent", { input }),
   listRemotes: () => invoke<RemoteHost[]>("list_remotes"),
   discoverSshHosts: () => invoke<DiscoveredSshHost[]>("discover_ssh_hosts"),
   addRemote: (input: { name?: string; host: string; user?: string; port?: number; dryRun?: boolean }) =>
