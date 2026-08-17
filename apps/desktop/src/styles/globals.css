@@ -970,6 +970,36 @@
     @apply mt-4 flex flex-wrap justify-end gap-2;
   }
 
+  .bulk-conflict-dialog {
+    @apply w-[min(94vw,560px)];
+  }
+
+  .bulk-conflict-summary {
+    @apply grid grid-cols-3 overflow-hidden rounded-lg border border-border;
+  }
+
+  .bulk-conflict-summary > div {
+    @apply flex items-center justify-between gap-2 border-r px-3 py-2.5 text-xs text-muted-foreground last:border-r-0;
+    background: hsl(var(--surface-subtle) / 0.48);
+  }
+
+  .bulk-conflict-summary strong {
+    @apply text-sm font-semibold text-foreground;
+  }
+
+  .bulk-conflict-agents {
+    @apply mt-3 flex flex-wrap gap-2;
+  }
+
+  .bulk-conflict-agents > span {
+    @apply inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground;
+    background: hsl(var(--surface-subtle) / 0.42);
+  }
+
+  .bulk-conflict-agents strong {
+    @apply ml-0.5 font-semibold text-foreground;
+  }
+
   .source-list {
     @apply grid min-w-0 gap-1.5 p-2;
   }
