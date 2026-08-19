@@ -1093,16 +1093,23 @@ function ImportSkillDialog({
         force,
       });
       const imported = result.items.filter((item) => item.status === "imported");
-      const syncResults = selectedAgents.length
-        ? await Promise.allSettled(imported.map((item) => api.linkEnvironmentSkill({
-            environmentId: environment.id,
-            skillName: item.skillName,
-            tools: selectedAgents,
-          })))
-        : [];
+      let syncFailures = 0;
+      if (selectedAgents.length) {
+        for (const item of imported) {
+          try {
+            await api.linkEnvironmentSkill({
+              environmentId: environment.id,
+              skillName: item.skillName,
+              tools: selectedAgents,
+            });
+          } catch {
+            syncFailures += 1;
+          }
+        }
+      }
       return {
         result,
-        syncFailures: syncResults.filter((item) => item.status === "rejected").length,
+        syncFailures,
       };
     },
     onSuccess: async ({ result, syncFailures }) => {
