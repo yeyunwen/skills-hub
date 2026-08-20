@@ -1,6 +1,6 @@
 use crate::{
-    copy_dir, create_relative_symlink, is_symlink_to, load_config, load_lock, path_exists,
-    paths_resolve_same, safe_skill_dir_name, save_lock, scan_skill_root, AgentKind,
+    copy_dir, create_relative_symlink, edit_lock, is_symlink_to, load_config, load_lock,
+    path_exists, paths_resolve_same, safe_skill_dir_name, scan_skill_root, AgentKind,
     ManagedLinkRecord, MigrationRecord, SkillInfo,
 };
 use anyhow::Result;
@@ -127,7 +127,7 @@ pub fn link_skill(
     method: SyncMethod,
 ) -> Result<Vec<LinkTargetResult>> {
     let config = load_config()?;
-    let mut lock = load_lock(&config)?;
+    let mut lock = edit_lock(&config)?;
     let hub_skill = find_hub_skill(skill_name)?;
     let Some(hub_skill) = hub_skill else {
         return Ok(agents
@@ -162,7 +162,7 @@ pub fn link_skill(
     }
 
     if !dry_run {
-        save_lock(&config, &lock)?;
+        lock.save()?;
     }
     Ok(results)
 }
@@ -174,7 +174,7 @@ pub fn unlink_skill(
     dry_run: bool,
 ) -> Result<Vec<LinkTargetResult>> {
     let config = load_config()?;
-    let mut lock = load_lock(&config)?;
+    let mut lock = edit_lock(&config)?;
     let hub_skill = find_hub_skill(skill_name)?;
     let target_path = hub_skill
         .as_ref()
@@ -244,7 +244,7 @@ pub fn unlink_skill(
     }
 
     if !dry_run {
-        save_lock(&config, &lock)?;
+        lock.save()?;
     }
     Ok(results)
 }
@@ -275,7 +275,7 @@ pub fn remove_agent_skill(
     dry_run: bool,
 ) -> Result<AgentSkillRemoveResult> {
     let config = load_config()?;
-    let mut lock = load_lock(&config)?;
+    let mut lock = edit_lock(&config)?;
     let dir_name = safe_skill_dir_name(skill_name)?;
     let path = config.agents[&agent].skills_dir.join(&dir_name);
 
@@ -318,7 +318,7 @@ pub fn remove_agent_skill(
         lock.managed_links.retain(|record| {
             !(record.agent == agent && record.skill_name == dir_name && record.link_path == path)
         });
-        save_lock(&config, &lock)?;
+        lock.save()?;
     }
 
     Ok(AgentSkillRemoveResult {
@@ -343,7 +343,7 @@ pub fn takeover_agent_skill(
     method: SyncMethod,
 ) -> Result<TakeoverResult> {
     let config = load_config()?;
-    let mut lock = load_lock(&config)?;
+    let mut lock = edit_lock(&config)?;
     let hub_skill = find_hub_skill(skill_name)?
         .ok_or_else(|| anyhow::anyhow!("skill not found in hub: {skill_name}"))?;
     let agent_config = &config.agents[&agent];
@@ -382,7 +382,7 @@ pub fn takeover_agent_skill(
                     updated_at: Utc::now().to_rfc3339(),
                 },
             );
-            save_lock(&config, &lock)?;
+            lock.save()?;
         }
         (status, used_method, reason)
     };
@@ -507,7 +507,7 @@ pub fn migrate_from_agent(
     dry_run: bool,
 ) -> Result<Vec<MigrationRecord>> {
     let config = load_config()?;
-    let mut lock = load_lock(&config)?;
+    let mut lock = edit_lock(&config)?;
     let agent_config = &config.agents[&agent];
     let skills = scan_skill_root(&agent_config.skills_dir)?;
     let timestamp = Utc::now().format("%Y%m%d-%H%M%S").to_string();
@@ -560,7 +560,7 @@ pub fn migrate_from_agent(
     }
 
     if !dry_run {
-        save_lock(&config, &lock)?;
+        lock.save()?;
     }
     Ok(records)
 }

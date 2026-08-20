@@ -3,7 +3,13 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
+use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
+use tempfile::NamedTempFile;
+
+static HUB_LOCK_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Agent 的稳定 ID。使用字符串是为了允许用户配置任意 Coding Agent。
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -237,9 +243,9 @@ pub fn remove_agent(id: &str) -> Result<Option<AgentConfig>> {
 }
 
 fn clear_agent_lock_records(config: &HubConfig, kind: &AgentKind) -> Result<()> {
-    let mut lock = load_lock(config)?;
+    let mut lock = edit_lock(config)?;
     if remove_agent_lock_records(&mut lock, kind) {
-        save_lock(config, &lock)?;
+        lock.save()?;
     }
     Ok(())
 }
@@ -387,8 +393,13 @@ pub fn save_config(config: &HubConfig) -> Result<()> {
     Ok(())
 }
 
-/// 读取 lock；不存在时返回空 lock。
-pub fn load_lock(config: &HubConfig) -> Result<HubLock> {
+fn acquire_hub_lock() -> Result<MutexGuard<'static, ()>> {
+    HUB_LOCK_MUTEX
+        .lock()
+        .map_err(|_| anyhow!("skills hub lock mutex is poisoned"))
+}
+
+fn load_lock_unlocked(config: &HubConfig) -> Result<HubLock> {
     if !config.lock_path.exists() {
         return Ok(HubLock {
             version: 1,
@@ -399,16 +410,70 @@ pub fn load_lock(config: &HubConfig) -> Result<HubLock> {
     Ok(serde_json::from_str(&content)?)
 }
 
-/// 保存 lock 文件。
-pub fn save_lock(config: &HubConfig, lock: &HubLock) -> Result<()> {
-    if let Some(parent) = config.lock_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(
-        &config.lock_path,
-        format!("{}\n", serde_json::to_string_pretty(lock)?),
-    )?;
+fn save_lock_unlocked(config: &HubConfig, lock: &HubLock) -> Result<()> {
+    let parent = config
+        .lock_path
+        .parent()
+        .ok_or_else(|| anyhow!("lock path has no parent: {}", config.lock_path.display()))?;
+    fs::create_dir_all(parent)?;
+
+    let content = format!("{}\n", serde_json::to_string_pretty(lock)?);
+    let mut temporary = NamedTempFile::new_in(parent)?;
+    temporary.write_all(content.as_bytes())?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(&config.lock_path)
+        .map_err(|error| error.error)?;
     Ok(())
+}
+
+/// 读取 lock；不存在时返回空 lock。
+pub fn load_lock(config: &HubConfig) -> Result<HubLock> {
+    let _guard = acquire_hub_lock()?;
+    load_lock_unlocked(config)
+}
+
+/// 保存 lock 文件。内容先写入同目录临时文件，再原子替换目标文件。
+pub fn save_lock(config: &HubConfig, lock: &HubLock) -> Result<()> {
+    let _guard = acquire_hub_lock()?;
+    save_lock_unlocked(config, lock)
+}
+
+/// 持有互斥锁的可编辑 lock，保证读取、修改、保存属于同一个事务。
+pub struct HubLockTransaction<'a> {
+    _guard: MutexGuard<'static, ()>,
+    config: &'a HubConfig,
+    lock: HubLock,
+}
+
+impl Deref for HubLockTransaction<'_> {
+    type Target = HubLock;
+
+    fn deref(&self) -> &Self::Target {
+        &self.lock
+    }
+}
+
+impl DerefMut for HubLockTransaction<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.lock
+    }
+}
+
+impl HubLockTransaction<'_> {
+    pub fn save(&self) -> Result<()> {
+        save_lock_unlocked(self.config, &self.lock)
+    }
+}
+
+pub fn edit_lock(config: &HubConfig) -> Result<HubLockTransaction<'_>> {
+    let guard = acquire_hub_lock()?;
+    let lock = load_lock_unlocked(config)?;
+    Ok(HubLockTransaction {
+        _guard: guard,
+        config,
+        lock,
+    })
 }
 
 /// 初始化 hub 目录、配置文件、lock 文件和 cache/backup 目录。
@@ -437,6 +502,8 @@ pub fn init_hub(dry_run: bool) -> Result<HubConfig> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
 
     #[test]
     fn default_hub_uses_agents_directory_without_duplicate_agent_target() {
@@ -493,5 +560,48 @@ mod tests {
         assert!(remove_agent_lock_records(&mut lock, &AgentKind::codex()));
         assert_eq!(lock.managed_links.len(), 1);
         assert_eq!(lock.managed_links[0].agent, AgentKind::claude());
+    }
+
+    #[test]
+    fn concurrent_lock_transactions_preserve_every_record() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = default_config();
+        config.lock_path = temp.path().join("lock.json");
+        let config = Arc::new(config);
+        let worker_count = 24;
+        let barrier = Arc::new(Barrier::new(worker_count));
+
+        let workers = (0..worker_count)
+            .map(|index| {
+                let config = Arc::clone(&config);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    let mut lock = edit_lock(&config).unwrap();
+                    lock.managed_links.push(ManagedLinkRecord {
+                        agent: AgentKind::codex(),
+                        skill_name: format!("skill-{index}"),
+                        link_path: PathBuf::from(format!("/agent/skill-{index}")),
+                        target_path: PathBuf::from(format!("/hub/skill-{index}")),
+                        updated_at: String::new(),
+                    });
+                    lock.save().unwrap();
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        let content = fs::read_to_string(&config.lock_path).unwrap();
+        let parsed: HubLock = serde_json::from_str(&content).unwrap();
+        assert_eq!(parsed.managed_links.len(), worker_count);
+        for index in 0..worker_count {
+            assert!(parsed
+                .managed_links
+                .iter()
+                .any(|record| record.skill_name == format!("skill-{index}")));
+        }
     }
 }
