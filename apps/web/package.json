@@ -10,6 +10,6 @@
     "check": "vite build"
   },
   "devDependencies": {
-    "vite": "^7.3.0"
+    "vite": "^7.3.7"
   }
 }
